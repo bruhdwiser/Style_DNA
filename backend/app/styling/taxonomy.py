@@ -85,9 +85,9 @@ SUBCATEGORY_FORMALITY: dict[str, int] = {
 
 FORMALITY_OCCASIONS: dict[int, list[str]] = {
     0: ["casual", "college", "lounge"],
-    1: ["casual", "work", "college", "party"],
-    2: ["work", "formal", "party"],
-    3: ["festive", "wedding", "formal", "party"],
+    1: ["casual", "work", "college", "party", "date"],
+    2: ["work", "formal", "party", "date"],
+    3: ["festive", "wedding", "formal", "party", "date"],
 }
 
 SUBCATEGORY_STYLES: dict[str, list[str]] = {

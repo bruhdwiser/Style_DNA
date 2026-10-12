@@ -42,6 +42,7 @@ import './OutfitsPage.css'
 
 const OCCASIONS = [
   { id: 'casual', label: 'Casual', icon: '☕' },
+  { id: 'date', label: 'Date Night / Romantic', icon: '🍷' },
   { id: 'work', label: 'Work / Office', icon: '💼' },
   { id: 'party', label: 'Party / Night Out', icon: '✨' },
   { id: 'formal', label: 'Formal', icon: '👔' },
@@ -53,11 +54,12 @@ const OCCASIONS = [
 
 const VIBES = [
   { id: '', label: 'Any Vibe' },
-  { id: 'minimal', label: 'Minimal' },
+  { id: 'romantic', label: 'Romantic' },
+  { id: 'elegant', label: 'Elegant' },
   { id: 'classic', label: 'Classic' },
+  { id: 'minimal', label: 'Minimal' },
   { id: 'bohemian', label: 'Bohemian' },
   { id: 'streetwear', label: 'Streetwear' },
-  { id: 'elegant', label: 'Elegant' },
 ]
 
 const SEASONS = [

@@ -20,6 +20,8 @@ OUTFIT_RULE_CONFIG: dict[str, Any] = {
         "college": 1,
         "lounge": 1,
         "work": 2,
+        "date": 2,
+        "date_night": 3,
         "party": 3,
         "festive": 3,
         "formal": 4,

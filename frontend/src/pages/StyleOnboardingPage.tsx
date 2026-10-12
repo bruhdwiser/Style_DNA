@@ -15,6 +15,7 @@ const STYLE_OPTIONS = [
   { id: 'streetwear', label: 'Streetwear', emoji: '🧢' },
   { id: 'bohemian', label: 'Bohemian', emoji: '🌿' },
   { id: 'elegant', label: 'Elegant', emoji: '✨' },
+  { id: 'romantic', label: 'Romantic', emoji: '🌹' },
   { id: 'casual', label: 'Casual', emoji: '👕' },
   { id: 'trend', label: 'Trendy', emoji: '🔥' },
 ]
@@ -36,6 +37,7 @@ const COLOR_OPTIONS = [
 
 const OCCASION_OPTIONS = [
   { id: 'casual', label: 'Casual', emoji: '☕' },
+  { id: 'date', label: 'Date Night', emoji: '🍷' },
   { id: 'work', label: 'Work', emoji: '💼' },
   { id: 'college', label: 'College', emoji: '🎓' },
   { id: 'party', label: 'Party', emoji: '🎉' },
