@@ -86,6 +86,8 @@ def occasion_to_formality_band(occasion: Any) -> int:
 def season_match(item: Any, season: Any) -> bool:
     """Check whether an item is valid for a target season."""
     season_key = _normalize(season)
+    if season_key in ("all_season", "all", "any"):
+        return True
     values = _coerce_item(item, "season", None)
     if values is None:
         values = _coerce_item(item, "seasons", None)
@@ -98,7 +100,8 @@ def season_match(item: Any, season: Any) -> bool:
     else:
         options = {_normalize(values)}
     return any(
-        option in OUTFIT_RULE_CONFIG["season_aliases"].get(season_key, {season_key})
+        option in OUTFIT_RULE_CONFIG["season_aliases"].get(season_key, {season_key, "all_season"})
+        or option == "all_season"
         for option in options
     )
 
