@@ -1,0 +1,7 @@
+-- Add products with colors and sizes for testing
+INSERT INTO public.products (name, description, price_cents, category, colors, sizes, is_new, is_sale, image_url) VALUES
+('Classic White T-Shirt', 'Premium quality cotton t-shirt perfect for casual wear. Soft, comfortable, and durable.', 199900, 'Casual', ARRAY['White', 'Black', 'Grey'], ARRAY['XS', 'S', 'M', 'L', 'XL'], true, false, '/placeholder.svg'),
+('Blue Denim Jeans', 'Slim fit blue jeans made from premium denim fabric. Modern cut with classic styling.', 499900, 'Casual', ARRAY['Blue', 'Dark Blue', 'Light Blue'], ARRAY['28', '30', '32', '34', '36'], false, true, '/placeholder.svg'),
+('Black Leather Jacket', 'Stylish black leather jacket for a bold and edgy look. Perfect for evening wear.', 1299900, 'Formal', ARRAY['Black', 'Brown'], ARRAY['S', 'M', 'L', 'XL'], false, false, '/placeholder.svg'),
+('Summer Floral Dress', 'Light and airy floral dress perfect for summer occasions. Elegant and comfortable.', 399900, 'Casual', ARRAY['Pink', 'White', 'Yellow'], ARRAY['XS', 'S', 'M', 'L'], true, false, '/placeholder.svg'),
+('White Sneakers', 'Comfortable white sneakers for everyday wear. Lightweight and stylish.', 799900, 'Casual', ARRAY['White', 'Black', 'Navy'], ARRAY['6', '7', '8', '9', '10', '11'], false, false, '/placeholder.svg');
