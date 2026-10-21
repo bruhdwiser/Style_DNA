@@ -433,7 +433,13 @@ async def generate_outfit_recommendations(
     chosen_core_sigs: set[frozenset[tuple[str, str]]] = set()
     chosen_item_sets: set[tuple[str, ...]] = set()
 
-    for total_score, cand, scores, reasons in above_threshold_wardrobe[:body.limit]:
+    # Pass 1: Prioritize distinct core wardrobe combinations up to body.limit
+    for total_score, cand, scores, reasons in above_threshold_wardrobe:
+        cand_item_sig = tuple(sorted(cand.item_ids))
+        if cand_item_sig in chosen_item_sets:
+            continue
+        if cand.core_signature in chosen_core_sigs:
+            continue
         selected_looks.append({
             "candidate": cand,
             "score": total_score,
@@ -445,7 +451,30 @@ async def generate_outfit_recommendations(
             "catalog_product": None,
         })
         chosen_core_sigs.add(cand.core_signature)
-        chosen_item_sets.add(cand.item_ids)
+        chosen_item_sets.add(cand_item_sig)
+        if len(selected_looks) >= body.limit:
+            break
+
+    # Pass 2: If limit not met, allow unique peripheral variations (same core with different shoes/layers)
+    if len(selected_looks) < body.limit:
+        for total_score, cand, scores, reasons in above_threshold_wardrobe:
+            cand_item_sig = tuple(sorted(cand.item_ids))
+            if cand_item_sig in chosen_item_sets:
+                continue
+            selected_looks.append({
+                "candidate": cand,
+                "score": total_score,
+                "scores": scores,
+                "reasons": reasons,
+                "source_type": "wardrobe",
+                "is_below_threshold": False,
+                "quality_warning": None,
+                "catalog_product": None,
+            })
+            chosen_core_sigs.add(cand.core_signature)
+            chosen_item_sets.add(cand_item_sig)
+            if len(selected_looks) >= body.limit:
+                break
 
     # Shortfall is requested count minus distinct wardrobe looks meeting the quality threshold
     shortfall = max(0, body.limit - len(selected_looks))
@@ -570,14 +599,15 @@ async def generate_outfit_recommendations(
         above_threshold_mixed.sort(key=sort_key)
         below_threshold_mixed.sort(key=sort_key)
 
-        # Fill shortfall with above-threshold mixed looks
+        # Fill shortfall with above-threshold mixed looks:
+        # Pass 1: Prioritize distinct core combinations not yet present in chosen_core_sigs
         for total_score, cand, scores, reasons, prod in above_threshold_mixed:
-            if cand.item_ids in chosen_item_sets:
+            cand_item_sig = tuple(sorted(cand.item_ids))
+            if cand_item_sig in chosen_item_sets:
                 continue
             if body.is_shuffle and cand.core_signature in exclude_cores:
                 continue
-            is_core_repeat = cand.core_signature in chosen_core_sigs
-            if is_core_repeat and len(above_threshold_mixed) > shortfall:
+            if cand.core_signature in chosen_core_sigs:
                 continue
 
             selected_looks.append({
@@ -591,19 +621,48 @@ async def generate_outfit_recommendations(
                 "catalog_product": prod,
             })
             chosen_core_sigs.add(cand.core_signature)
-            chosen_item_sets.add(cand.item_ids)
+            chosen_item_sets.add(cand_item_sig)
             shortfall -= 1
             if shortfall == 0:
                 break
 
+        # Pass 2: If shortfall remains (e.g. sparse wardrobe where no more distinct cores exist),
+        # permit reusing an existing core if it is completed with a distinct item (different catalog piece)
+        if shortfall > 0:
+            for total_score, cand, scores, reasons, prod in above_threshold_mixed:
+                cand_item_sig = tuple(sorted(cand.item_ids))
+                if cand_item_sig in chosen_item_sets:
+                    continue
+                if body.is_shuffle and cand.core_signature in exclude_cores:
+                    continue
+
+                selected_looks.append({
+                    "candidate": cand,
+                    "score": total_score,
+                    "scores": scores,
+                    "reasons": reasons,
+                    "source_type": "mixed",
+                    "is_below_threshold": False,
+                    "quality_warning": None,
+                    "catalog_product": prod,
+                })
+                chosen_core_sigs.add(cand.core_signature)
+                chosen_item_sets.add(cand_item_sig)
+                shortfall -= 1
+                if shortfall == 0:
+                    break
+
     # 10. Fall back to below-threshold unique looks (wardrobe first, then mixed) if shortfall remains
     below_threshold_included = 0
     if shortfall > 0 and (below_threshold_wardrobe or below_threshold_mixed):
-        # 10a. Wardrobe below-threshold looks
+        # 10a. Wardrobe below-threshold looks: Pass 1 distinct cores, Pass 2 peripheral variations
         for total_score, cand, scores, reasons in below_threshold_wardrobe:
-            if cand.item_ids in chosen_item_sets:
+            cand_item_sig = tuple(sorted(cand.item_ids))
+            if cand_item_sig in chosen_item_sets:
                 continue
             if body.is_shuffle and cand.core_signature in exclude_cores:
+                continue
+            if cand.core_signature in chosen_core_sigs:
                 continue
             quality_warn = (
                 f"Compatibility score {total_score:.2f} is below your preferred quality threshold "
@@ -620,16 +679,75 @@ async def generate_outfit_recommendations(
                 "catalog_product": None,
             })
             chosen_core_sigs.add(cand.core_signature)
-            chosen_item_sets.add(cand.item_ids)
+            chosen_item_sets.add(cand_item_sig)
             below_threshold_included += 1
             shortfall -= 1
             if shortfall == 0:
                 break
 
-        # 10b. Mixed below-threshold looks (for sparse wardrobes with limited combinations)
+        if shortfall > 0:
+            for total_score, cand, scores, reasons in below_threshold_wardrobe:
+                cand_item_sig = tuple(sorted(cand.item_ids))
+                if cand_item_sig in chosen_item_sets:
+                    continue
+                if body.is_shuffle and cand.core_signature in exclude_cores:
+                    continue
+                quality_warn = (
+                    f"Compatibility score {total_score:.2f} is below your preferred quality threshold "
+                    f"({body.min_quality_threshold:.2f}); included as a last-resort alternative."
+                )
+                selected_looks.append({
+                    "candidate": cand,
+                    "score": total_score,
+                    "scores": scores,
+                    "reasons": reasons,
+                    "source_type": "wardrobe",
+                    "is_below_threshold": True,
+                    "quality_warning": quality_warn,
+                    "catalog_product": None,
+                })
+                chosen_core_sigs.add(cand.core_signature)
+                chosen_item_sets.add(cand_item_sig)
+                below_threshold_included += 1
+                shortfall -= 1
+                if shortfall == 0:
+                    break
+
+        # 10b. Mixed below-threshold looks: Pass 1 distinct cores, Pass 2 peripheral variations
         if shortfall > 0:
             for total_score, cand, scores, reasons, prod in below_threshold_mixed:
-                if cand.item_ids in chosen_item_sets:
+                cand_item_sig = tuple(sorted(cand.item_ids))
+                if cand_item_sig in chosen_item_sets:
+                    continue
+                if body.is_shuffle and cand.core_signature in exclude_cores:
+                    continue
+                if cand.core_signature in chosen_core_sigs:
+                    continue
+                quality_warn = (
+                    f"Compatibility score {total_score:.2f} is below your preferred quality threshold "
+                    f"({body.min_quality_threshold:.2f}); completed with store piece as an alternative."
+                )
+                selected_looks.append({
+                    "candidate": cand,
+                    "score": total_score,
+                    "scores": scores,
+                    "reasons": reasons,
+                    "source_type": "mixed",
+                    "is_below_threshold": True,
+                    "quality_warning": quality_warn,
+                    "catalog_product": prod,
+                })
+                chosen_core_sigs.add(cand.core_signature)
+                chosen_item_sets.add(cand_item_sig)
+                below_threshold_included += 1
+                shortfall -= 1
+                if shortfall == 0:
+                    break
+
+        if shortfall > 0:
+            for total_score, cand, scores, reasons, prod in below_threshold_mixed:
+                cand_item_sig = tuple(sorted(cand.item_ids))
+                if cand_item_sig in chosen_item_sets:
                     continue
                 if body.is_shuffle and cand.core_signature in exclude_cores:
                     continue
@@ -648,7 +766,7 @@ async def generate_outfit_recommendations(
                     "catalog_product": prod,
                 })
                 chosen_core_sigs.add(cand.core_signature)
-                chosen_item_sets.add(cand.item_ids)
+                chosen_item_sets.add(cand_item_sig)
                 below_threshold_included += 1
                 shortfall -= 1
                 if shortfall == 0:
@@ -810,17 +928,21 @@ async def generate_outfit_recommendations(
     status_val = "partial_results" if len(persisted_outfits) < body.limit else "success"
 
     message = None
-    if no_products_in_budget:
+    if status_val == "partial_results":
+        if body.is_shuffle and exclude_cores:
+            message = f"Found {len(persisted_outfits)} alternative outfit(s) for '{occasion}'. No further unseen combinations remain on your rack."
+        elif no_products_in_budget:
+            message = f"Found {len(persisted_outfits)} of {body.limit} requested outfit(s). No further catalog products within your budget could complete an outfit."
+        elif any(not o.wardrobe_only for o in persisted_outfits):
+            message = f"Found {len(persisted_outfits)} of {body.limit} requested outfit(s) for '{occasion}', completed with store pieces. All valid combinations have been shown."
+        else:
+            message = f"Found {len(persisted_outfits)} of {body.limit} requested unique outfit(s) for '{occasion}'. All valid combinations from your rack have been shown."
+    elif no_products_in_budget:
         message = "No catalog products within your budget could complete an outfit. Consider the cheapest alternative."
     elif any(not o.wardrobe_only for o in persisted_outfits) and any(o.wardrobe_only for o in persisted_outfits):
         message = "Showing your wardrobe outfits followed by recommended mixed looks."
-    elif any(not o.wardrobe_only for o in persisted_outfits) and not any(o.wardrobe_only for o in persisted_outfits):
-        message = "Showing outfits completed with catalog items to meet your selection."
-    elif status_val == "partial_results":
-        if body.is_shuffle and exclude_cores:
-            message = f"Found {len(persisted_outfits)} alternative outfit(s) for '{occasion}'. No further unseen combinations remain on your rack."
-        else:
-            message = f"Found {len(persisted_outfits)} unique valid outfits for '{occasion}' without repeating core garments."
+    elif any(not o.wardrobe_only for o in persisted_outfits):
+        message = "Showing outfits completed with catalog items."
 
     quality_warning_summary = None
     if below_threshold_included > 0:

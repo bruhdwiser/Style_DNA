@@ -1638,3 +1638,145 @@ async def test_case_5_request_exceeding_unique_combinations_returns_partial_resu
         assert len(item_sets) == len(set(item_sets))
 
 
+# ==============================================================================
+# Step 6: Recommendation Redundancy & Result-Count Reporting Tests
+# ==============================================================================
+
+@pytest.mark.anyio
+async def test_step_6_duplicate_candidates_rejected(test_user):
+    """Verify that exact duplicate candidates (identical sets of garment IDs) are strictly rejected."""
+    wardrobe = [
+        {"id": "w-top-1", "user_id": test_user.id, "category": "top", "slot": "top", "primary_color": "#FFFFFF", "formality": 1, "occasions": ["casual"], "seasons": ["all_season"], "is_available": True},
+        {"id": "w-top-2", "user_id": test_user.id, "category": "top", "slot": "top", "primary_color": "#000000", "formality": 1, "occasions": ["casual"], "seasons": ["all_season"], "is_available": True},
+        {"id": "w-bot-1", "user_id": test_user.id, "category": "bottom", "slot": "bottom", "primary_color": "#1E3A8A", "formality": 1, "occasions": ["casual"], "seasons": ["all_season"], "is_available": True},
+        {"id": "w-shoe-1", "user_id": test_user.id, "category": "shoes", "slot": "shoes", "primary_color": "#FFFFFF", "formality": 1, "occasions": ["casual"], "seasons": ["all_season"], "is_available": True},
+        {"id": "w-shoe-2", "user_id": test_user.id, "category": "shoes", "slot": "shoes", "primary_color": "#000000", "formality": 1, "occasions": ["casual"], "seasons": ["all_season"], "is_available": True},
+    ]
+
+    mock_client = MockSupabaseClient(wardrobe_items=wardrobe, products=[])
+
+    with patch("app.routers.outfits.get_user_scoped_supabase_client", return_value=mock_client):
+        req = GenerateOutfitsRequest(
+            wardrobe_only=True,
+            occasion="casual",
+            limit=4,
+        )
+        res = await generate_outfit_recommendations(req, token="dummy-token", user=test_user)
+
+        assert len(res.outfits) == 4
+        # Assert each returned outfit has a unique combination of items
+        item_sets = [
+            tuple(sorted((it.wardrobe_item_id or it.product_id) for it in o.items if (it.wardrobe_item_id or it.product_id)))
+            for o in res.outfits
+        ]
+        assert len(item_sets) == len(set(item_sets)), "No duplicate item sets permitted across recommended outfits"
+
+
+@pytest.mark.anyio
+async def test_step_6_same_core_with_different_completion_items(test_user):
+    """Verify that when distinct core combinations are exhausted, completing the same core with different catalog items is permitted and produces distinct looks."""
+    # Sparse wardrobe: exactly 1 top and 1 bottom (1 core)
+    wardrobe = [
+        {"id": "w-core-top", "user_id": test_user.id, "category": "top", "slot": "top", "primary_color": "#FFFFFF", "formality": 1, "occasions": ["casual"], "seasons": ["all_season"], "is_available": True},
+        {"id": "w-core-bottom", "user_id": test_user.id, "category": "bottom", "slot": "bottom", "primary_color": "#1E3A8A", "formality": 1, "occasions": ["casual"], "seasons": ["all_season"], "is_available": True},
+    ]
+
+    # Catalog contains 3 distinct shoes with valid UUID IDs
+    catalog = [
+        {"id": "44444444-0001-0000-0000-000000000000", "name": "White Canvas Sneaker", "category": "shoes", "slot": "shoes", "audience": "unisex", "price_cents": 150000, "occasions": ["casual"], "seasons": ["all_season"]},
+        {"id": "44444444-0002-0000-0000-000000000000", "name": "Black Leather Oxford", "category": "shoes", "slot": "shoes", "audience": "unisex", "price_cents": 250000, "occasions": ["casual"], "seasons": ["all_season"]},
+        {"id": "44444444-0003-0000-0000-000000000000", "name": "Brown Suede Chelsea Boot", "category": "shoes", "slot": "shoes", "audience": "unisex", "price_cents": 350000, "occasions": ["casual"], "seasons": ["all_season"]},
+    ]
+
+    mock_client = MockSupabaseClient(wardrobe_items=wardrobe, products=catalog)
+
+    with patch("app.routers.outfits.get_user_scoped_supabase_client", return_value=mock_client):
+        req = GenerateOutfitsRequest(
+            wardrobe_only=False,
+            occasion="casual",
+            limit=3,
+        )
+        res = await generate_outfit_recommendations(req, token="dummy-token", user=test_user)
+
+        assert len(res.outfits) == 3
+        assert res.status == "success"
+
+        # All 3 share the same wardrobe core
+        for o in res.outfits:
+            assert o.wardrobe_only is False
+            core_ids = {pair[1] for pair in o.core_signature}
+            assert core_ids == {"w-core-top", "w-core-bottom"}
+
+        # Each has a distinct completion product
+        product_ids = [o.unlocked_by_product_id for o in res.outfits]
+        assert set(product_ids) == {
+            "44444444-0001-0000-0000-000000000000",
+            "44444444-0002-0000-0000-000000000000",
+            "44444444-0003-0000-0000-000000000000",
+        }
+
+        # Item sets are strictly unique
+        item_sets = [
+            tuple(sorted((it.wardrobe_item_id or it.product_id) for it in o.items if (it.wardrobe_item_id or it.product_id)))
+            for o in res.outfits
+        ]
+        assert len(item_sets) == 3
+
+
+@pytest.mark.anyio
+async def test_step_6_exhausted_candidate_pools_reports_partial_results_truthfully(test_user):
+    """Verify that when a wardrobe cannot produce the requested count, it reports partial_results with exact counts without implying the requested count was met."""
+    wardrobe = [
+        {"id": "w-top-solo", "user_id": test_user.id, "category": "top", "slot": "top", "primary_color": "#FFFFFF", "formality": 1, "occasions": ["casual"], "seasons": ["all_season"], "is_available": True},
+        {"id": "w-bottom-solo", "user_id": test_user.id, "category": "bottom", "slot": "bottom", "primary_color": "#1E3A8A", "formality": 1, "occasions": ["casual"], "seasons": ["all_season"], "is_available": True},
+        {"id": "w-shoe-solo", "user_id": test_user.id, "category": "shoes", "slot": "shoes", "primary_color": "#000000", "formality": 1, "occasions": ["casual"], "seasons": ["all_season"], "is_available": True},
+    ]
+
+    mock_client = MockSupabaseClient(wardrobe_items=wardrobe, products=[])
+
+    with patch("app.routers.outfits.get_user_scoped_supabase_client", return_value=mock_client):
+        req = GenerateOutfitsRequest(
+            wardrobe_only=True,
+            occasion="casual",
+            limit=5,  # Requested 5, but only 1 exists
+        )
+        res = await generate_outfit_recommendations(req, token="dummy-token", user=test_user)
+
+        assert len(res.outfits) == 1
+        assert res.status == "partial_results"
+        assert res.message == "Found 1 of 5 requested unique outfit(s) for 'casual'. All valid combinations from your rack have been shown."
+        assert "to meet your selection" not in (res.message or "")
+
+
+@pytest.mark.anyio
+async def test_step_6_fewer_than_requested_mixed_results_reports_truthfully(test_user):
+    """Verify that when mixed recommendations return fewer than requested, it returns partial_results and truthful count, never claiming selection was met."""
+    # Sparse wardrobe: 1 top, 1 bottom, no shoes
+    wardrobe = [
+        {"id": "w-top-1", "user_id": test_user.id, "category": "top", "slot": "top", "primary_color": "#FFFFFF", "formality": 1, "occasions": ["casual"], "seasons": ["all_season"], "is_available": True},
+        {"id": "w-bot-1", "user_id": test_user.id, "category": "bottom", "slot": "bottom", "primary_color": "#1E3A8A", "formality": 1, "occasions": ["casual"], "seasons": ["all_season"], "is_available": True},
+    ]
+
+    # Catalog only has 2 shoes with valid UUID IDs
+    catalog = [
+        {"id": "55555555-0001-0000-0000-000000000000", "name": "Sneaker A", "category": "shoes", "slot": "shoes", "audience": "unisex", "price_cents": 150000, "occasions": ["casual"], "seasons": ["all_season"]},
+        {"id": "55555555-0002-0000-0000-000000000000", "name": "Sneaker B", "category": "shoes", "slot": "shoes", "audience": "unisex", "price_cents": 200000, "occasions": ["casual"], "seasons": ["all_season"]},
+    ]
+
+    mock_client = MockSupabaseClient(wardrobe_items=wardrobe, products=catalog)
+
+    with patch("app.routers.outfits.get_user_scoped_supabase_client", return_value=mock_client):
+        req = GenerateOutfitsRequest(
+            wardrobe_only=False,
+            occasion="casual",
+            limit=4,  # Requested 4, but only 2 can be produced
+        )
+        res = await generate_outfit_recommendations(req, token="dummy-token", user=test_user)
+
+        assert len(res.outfits) == 2
+        assert res.status == "partial_results"
+        assert res.message == "Found 2 of 4 requested outfit(s) for 'casual', completed with store pieces. All valid combinations have been shown."
+        assert "to meet your selection" not in (res.message or "")
+
+
+

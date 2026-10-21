@@ -826,4 +826,12 @@ When reviewing this codebase with another agent, use the following audit checkli
    - Verify Option A fail-closed consistency: save fails with 500 `SAVE_EVENT_ERROR` if the learning event write fails, leaving `is_saved = False`.
 7. **Frontend State & Error Handling**:
    - Inspect [`frontend/src/pages/OutfitsPage.tsx`](file:///c:/Users/bruhdweiser1/Desktop/everything/i_bleedcode/FlashFit_AI/Flashfits-AI/frontend/src/pages/OutfitsPage.tsx). Confirm that single toggle "Use only my rack" defaults to `false`, tag modal opens on save/edit, tag filter bar calls `loadSavedOutfits(tag)`, and failed actions revert optimistic state and display `.outfits-action-error-banner`.
+8. **Recommendation Redundancy & Result-Count Reporting**:
+   - Inspect candidate selection in `generate_outfit_recommendations`. Confirm two-pass core-priority shortfall filling: Pass 1 selects candidates with unseen core signatures first; Pass 2 permits reusing core signatures with distinct completion items (e.g., alternate shoes or layers) only when distinct cores are exhausted.
+   - Confirm canonical deduplication across all selection passes via `tuple(sorted(cand.item_ids)) in chosen_item_sets`.
+   - Verify that whenever `status = "partial_results"`, the response message truthfully reports exact counts (e.g. `Found X of Y requested...`) without falsely claiming or implying that the requested count was met.
+9. **Integration Audit & Verification**:
+   - Confirm that all acceptance criteria across Steps 1–6 are verified via automated test suites.
+   - Run backend test suite (`pytest backend/tests`), frontend unit tests (`node --test tests/shuffle_signatures.test.mjs`), and frontend production build (`tsc -b && vite build`) to ensure cross-layer contract stability.
+
 
