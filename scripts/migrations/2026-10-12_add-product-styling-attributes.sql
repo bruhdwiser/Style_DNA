@@ -1,5 +1,6 @@
 -- ==============================================================================
 -- Forward-Only Migration: Add Styling and Taxonomy Attributes to Products
+-- Run fourth, before the style-profile, wardrobe, outfit, and seed scripts.
 -- Date: 2026-10-12
 --
 -- Description:
@@ -25,6 +26,7 @@
 -- ==============================================================================
 
 alter table if exists public.products
+  add column if not exists description text,
   add column if not exists audience text default 'all',
   add column if not exists slot text,
   add column if not exists subtype text,
@@ -37,19 +39,11 @@ alter table if exists public.products
   add column if not exists pattern text,
   add column if not exists seed_key text;
 
--- Add unique constraint on seed_key for idempotent upserts if not already present
-do $$
-begin
-  if not exists (
-    select 1 from pg_constraint
-    where conname = 'uq_products_seed_key'
-      and conrelid = 'public.products'::regclass
-  ) then
-    alter table public.products add constraint uq_products_seed_key unique (seed_key);
-  end if;
-exception when others then
-  null;
-end $$;
+-- The seed uses ON CONFLICT (seed_key); this unique index makes those upserts
+-- deterministic and re-runnable. Existing duplicate keys will be reported
+-- instead of silently skipping the uniqueness requirement.
+create unique index if not exists uq_products_seed_key
+  on public.products (seed_key);
 
 -- Column documentation
 comment on column public.products.audience is 'Target styling audience: women, men, unisex, all';
@@ -67,10 +61,11 @@ comment on column public.products.seed_key is 'Deterministic seed identifier for
 -- Indexing for fast catalog styling queries
 create index if not exists idx_products_styling on public.products (slot, audience);
 create index if not exists idx_products_formality on public.products (formality);
-create index if not exists idx_products_seed_key on public.products (seed_key);
 
 -- ==============================================================================
--- Idempotent backfill: populate styling attributes for existing seed items
+-- Idempotent backfill: populate styling attributes for existing seed items.
+-- Append each row UUID to the key so duplicate demo products with the same
+-- name remain valid under the unique seed_key index.
 -- ==============================================================================
 update public.products
 set audience = 'women',
@@ -82,7 +77,7 @@ set audience = 'women',
     seasons = ARRAY['all_season'],
     fit = 'regular',
     pattern = 'solid',
-    seed_key = 'existing_minimalist_blazer'
+    seed_key = 'existing_minimalist_blazer_' || id::text
 where name = 'Minimalist Blazer' and slot is null;
 
 update public.products
@@ -95,7 +90,7 @@ set audience = 'unisex',
     seasons = ARRAY['winter', 'all_season'],
     fit = 'oversized',
     pattern = 'solid',
-    seed_key = 'existing_streetwear_hoodie'
+    seed_key = 'existing_streetwear_hoodie_' || id::text
 where name = 'Streetwear Hoodie' and slot is null;
 
 update public.products
@@ -108,7 +103,7 @@ set audience = 'women',
     seasons = ARRAY['all_season'],
     fit = 'regular',
     pattern = 'solid',
-    seed_key = 'existing_elegant_midi_dress'
+    seed_key = 'existing_elegant_midi_dress_' || id::text
 where name = 'Elegant Midi Dress' and slot is null;
 
 update public.products
@@ -121,7 +116,7 @@ set audience = 'unisex',
     seasons = ARRAY['all_season', 'winter'],
     fit = 'relaxed',
     pattern = 'solid',
-    seed_key = 'existing_casual_denim_jacket'
+    seed_key = 'existing_casual_denim_jacket_' || id::text
 where name = 'Casual Denim Jacket' and slot is null;
 
 update public.products
@@ -134,7 +129,7 @@ set audience = 'women',
     seasons = ARRAY['all_season'],
     fit = 'regular',
     pattern = 'solid',
-    seed_key = 'existing_professional_trousers'
+    seed_key = 'existing_professional_trousers_' || id::text
 where name = 'Professional Trousers' and slot is null;
 
 update public.products
@@ -147,7 +142,7 @@ set audience = 'women',
     seasons = ARRAY['summer'],
     fit = 'slim',
     pattern = 'solid',
-    seed_key = 'existing_trendy_crop_top'
+    seed_key = 'existing_trendy_crop_top_' || id::text
 where name = 'Trendy Crop Top' and slot is null;
 
 update public.products
@@ -160,7 +155,7 @@ set audience = 'unisex',
     seasons = ARRAY['all_season'],
     fit = 'regular',
     pattern = 'solid',
-    seed_key = 'existing_classic_white_shirt'
+    seed_key = 'existing_classic_white_shirt_' || id::text
 where name = 'Classic White Shirt' and slot is null;
 
 update public.products
@@ -173,7 +168,7 @@ set audience = 'unisex',
     seasons = ARRAY['all_season'],
     fit = 'relaxed',
     pattern = 'solid',
-    seed_key = 'existing_athleisure_joggers'
+    seed_key = 'existing_athleisure_joggers_' || id::text
 where name = 'Athleisure Joggers' and slot is null;
 
 update public.products
@@ -186,7 +181,7 @@ set audience = 'unisex',
     seasons = ARRAY['all_season', 'winter'],
     fit = 'regular',
     pattern = 'solid',
-    seed_key = 'existing_leather_chelsea_boots'
+    seed_key = 'existing_leather_chelsea_boots_' || id::text
 where name = 'Leather Chelsea Boots' and slot is null;
 
 update public.products
@@ -199,5 +194,5 @@ set audience = 'unisex',
     seasons = ARRAY['summer'],
     fit = 'relaxed',
     pattern = 'solid',
-    seed_key = 'existing_summer_linen_shirt'
+    seed_key = 'existing_summer_linen_shirt_' || id::text
 where name = 'Summer Linen Shirt' and slot is null;

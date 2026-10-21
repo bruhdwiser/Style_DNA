@@ -6,10 +6,10 @@ export function usePageTracking() {
   const location = useLocation()
 
   useEffect(() => {
-    let sessionId = sessionStorage.getItem('flashfit_session_id')
+    let sessionId = sessionStorage.getItem('stylesense_session_id')
     if (!sessionId) {
       sessionId = `sess_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`
-      sessionStorage.setItem('flashfit_session_id', sessionId)
+      sessionStorage.setItem('stylesense_session_id', sessionId)
     }
 
     api.analytics
@@ -27,10 +27,10 @@ export function usePageTracking() {
 }
 
 export function trackProductView(productId: string, productName: string) {
-  let sessionId = sessionStorage.getItem('flashfit_session_id')
+  let sessionId = sessionStorage.getItem('stylesense_session_id')
   if (!sessionId) {
     sessionId = `sess_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`
-    sessionStorage.setItem('flashfit_session_id', sessionId)
+    sessionStorage.setItem('stylesense_session_id', sessionId)
   }
 
   api.analytics

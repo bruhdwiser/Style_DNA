@@ -1,8 +1,13 @@
--- Run this in the Supabase SQL editor
+-- FlashFit base schema — run first in the Supabase SQL Editor.
+-- Safe to re-run. Product writes are intentionally restricted to the backend
+-- service role; the backend checks admin authorization before changing catalog data.
+
+begin;
 
 create table if not exists public.products (
   id uuid primary key default gen_random_uuid(),
   name text not null,
+  description text,
   price_cents integer not null check (price_cents >= 0),
   image_url text,
   category text,
@@ -13,31 +18,35 @@ create table if not exists public.products (
   sizes text[],
   created_at timestamptz not null default now()
 );
+
+-- Keep older installations compatible with the current seed and admin forms.
+alter table public.products
+  add column if not exists description text,
+  add column if not exists category text,
+  add column if not exists original_price_cents integer,
+  add column if not exists is_new boolean not null default false,
+  add column if not exists is_sale boolean not null default false,
+  add column if not exists colors text[],
+  add column if not exists sizes text[];
+
 alter table public.products enable row level security;
-create policy if not exists "Public can read products"
+
+drop policy if exists "Public can read products" on public.products;
+create policy "Public can read products"
   on public.products for select
   to anon, authenticated
   using (true);
--- Allow authenticated users to insert products (optional, remove in real prod)
-create policy if not exists "Auth can insert products"
-  on public.products for insert
-  to authenticated
-  with check (true);
-
--- Storage: public bucket for product images
--- Run once. If it already exists, this will error; ignore or wrap with DO block if needed.
--- select storage.create_bucket('products', public := true);
--- Policies: allow anon read, authenticated upload/update own objects
--- Note: For stricter control, set public := false and add signed URL flow.
--- Policy names must be unique; use if not exists semantics on dashboard if needed.
-
+-- Remove the old unrestricted catalog-write policy, if an earlier schema created it.
+drop policy if exists "Auth can insert products" on public.products;
 
 create table if not exists public.carts (
   user_id uuid primary key references auth.users(id) on delete cascade,
   created_at timestamptz not null default now()
 );
 alter table public.carts enable row level security;
-create policy if not exists "Users manage own cart"
+
+drop policy if exists "Users manage own cart" on public.carts;
+create policy "Users manage own cart"
   on public.carts for all
   to authenticated
   using (auth.uid() = user_id)
@@ -52,8 +61,18 @@ create table if not exists public.cart_items (
   unique (cart_user_id, product_id)
 );
 alter table public.cart_items enable row level security;
-create policy if not exists "Users CRUD own cart items"
+
+drop policy if exists "Users CRUD own cart items" on public.cart_items;
+create policy "Users CRUD own cart items"
   on public.cart_items for all
   to authenticated
   using (auth.uid() = cart_user_id)
   with check (auth.uid() = cart_user_id);
+
+grant usage on schema public to anon, authenticated, service_role;
+grant select on public.products to anon, authenticated;
+grant all on public.products to service_role;
+grant select, insert, update, delete on public.carts, public.cart_items to authenticated;
+grant all on public.carts, public.cart_items to service_role;
+
+commit;

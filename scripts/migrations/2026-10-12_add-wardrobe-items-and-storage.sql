@@ -1,5 +1,6 @@
 -- ==============================================================================
 -- Forward-Only Migration: Wardrobe Items and Private Storage Bucket
+-- Run sixth, after the style-profile migration.
 -- Date: 2026-10-12
 --
 -- Description:
@@ -61,7 +62,8 @@ create index if not exists idx_wardrobe_items_needs_review
 -- 3. Row Level Security on wardrobe_items
 alter table public.wardrobe_items enable row level security;
 
-create policy if not exists "Users manage own wardrobe items"
+drop policy if exists "Users manage own wardrobe items" on public.wardrobe_items;
+create policy "Users manage own wardrobe items"
   on public.wardrobe_items for all
   to authenticated
   using (auth.uid() = user_id)
@@ -77,10 +79,18 @@ comment on column public.wardrobe_items.storage_path is 'Path to the sanitized i
 -- Note: executed in storage schema if permissions allow; idempotent
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 values ('wardrobe', 'wardrobe', false, 10485760, array['image/jpeg', 'image/png', 'image/webp'])
-on conflict (id) do update set public = false;
+on conflict (id) do update set
+  name = excluded.name,
+  public = false,
+  file_size_limit = excluded.file_size_limit,
+  allowed_mime_types = excluded.allowed_mime_types;
+
+grant select, insert, update, delete on public.wardrobe_items to authenticated;
+grant all on public.wardrobe_items to service_role;
 
 -- 5. Storage RLS Policies: users access only their own user_id folder
-create policy if not exists "Users upload to own folder"
+drop policy if exists "Users upload to own folder" on storage.objects;
+create policy "Users upload to own folder"
   on storage.objects for insert
   to authenticated
   with check (
@@ -88,7 +98,8 @@ create policy if not exists "Users upload to own folder"
     and (storage.foldername(name))[1] = auth.uid()::text
   );
 
-create policy if not exists "Users read own folder"
+drop policy if exists "Users read own folder" on storage.objects;
+create policy "Users read own folder"
   on storage.objects for select
   to authenticated
   using (
@@ -96,15 +107,21 @@ create policy if not exists "Users read own folder"
     and (storage.foldername(name))[1] = auth.uid()::text
   );
 
-create policy if not exists "Users update own folder"
+drop policy if exists "Users update own folder" on storage.objects;
+create policy "Users update own folder"
   on storage.objects for update
   to authenticated
   using (
     bucket_id = 'wardrobe'
     and (storage.foldername(name))[1] = auth.uid()::text
+  )
+  with check (
+    bucket_id = 'wardrobe'
+    and (storage.foldername(name))[1] = auth.uid()::text
   );
 
-create policy if not exists "Users delete own folder"
+drop policy if exists "Users delete own folder" on storage.objects;
+create policy "Users delete own folder"
   on storage.objects for delete
   to authenticated
   using (

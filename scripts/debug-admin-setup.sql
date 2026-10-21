@@ -27,7 +27,7 @@ SELECT
     au.permissions,
     au.created_at,
     u.email
-FROM admin_users au
+FROM public.admin_users au
 JOIN auth.users u ON u.id = au.user_id
 WHERE u.email = 'tanishq.shelar365@gmail.com';
 
@@ -36,7 +36,7 @@ SELECT
     au.role,
     au.permissions,
     u.email
-FROM admin_users au
+FROM public.admin_users au
 JOIN auth.users u ON u.id = au.user_id;
 
 -- 6. Check RLS policies on admin_users
@@ -49,4 +49,4 @@ SELECT
     cmd,
     qual
 FROM pg_policies
-WHERE tablename = 'admin_users';
+WHERE schemaname = 'public' AND tablename = 'admin_users';

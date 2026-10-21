@@ -1,5 +1,6 @@
 -- ==============================================================================
 -- Forward-Only Migration: Add Variant Fields to Cart Items
+-- Run third, after schema.sql and create-analytics-tables-clean.sql.
 -- Date: 2026-10-12
 --
 -- Description:

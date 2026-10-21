@@ -1,16 +1,13 @@
 import React, { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { BarChart3, Eye, ShoppingCart, Search, ArrowLeft, RefreshCw, AlertCircle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Navigation } from '@/components/navigation'
 import { Footer } from '@/components/footer'
 import { api, type AnalyticsStatsResponse } from '@/lib/api'
-import { useAuth } from '@/contexts/auth-context'
 
 export default function AdminAnalyticsPage() {
-  const { user } = useAuth()
   const [stats, setStats] = useState<AnalyticsStatsResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -40,34 +37,31 @@ export default function AdminAnalyticsPage() {
     <div className="min-h-screen bg-background flex flex-col">
       <Navigation />
 
-      <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 w-full space-y-8">
+      <main className="analytics-main">
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-6 border-b border-border gap-4">
-          <div className="flex items-center gap-4">
+          <div className="analytics-page-heading">
             <Link to="/admin">
-              <Button variant="ghost" size="icon">
-                <ArrowLeft className="w-5 h-5" />
-              </Button>
+              <span className="analytics-back-link">← STOCK ROOM</span>
             </Link>
             <div>
-              <h1 className="text-3xl font-extrabold text-foreground tracking-tight">
-                Analytics & Telemetry
+              <p className="eyebrow">STYLESENSE / STORE NOTES</p>
+              <h1 className="font-display text-4xl sm:text-5xl font-normal text-foreground">
+                Store notes.
               </h1>
               <p className="text-xs text-muted-foreground mt-0.5">
-                Real-time event tracking powered by FastAPI and Postgres
+                Activity across the rack and fitting room.
               </p>
             </div>
           </div>
 
-          <Button variant="outline" size="sm" onClick={fetchStats} className="gap-2 self-start sm:self-auto">
-            <RefreshCw className="w-4 h-4" />
-            Refresh Data
+          <Button variant="outline" size="sm" onClick={fetchStats} className="self-start sm:self-auto font-mono text-xs">
+            REFRESH DATA ↻
           </Button>
         </div>
 
         {error && (
-          <div className="p-4 bg-destructive/10 border border-destructive/20 rounded-xl flex items-start gap-3 text-sm text-destructive">
-            <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
+          <div className="admin-notice error">
             <div>
               <p className="font-semibold">Access Error</p>
               <p className="text-xs mt-0.5">{error}</p>
@@ -77,17 +71,17 @@ export default function AdminAnalyticsPage() {
 
         {loading ? (
           <div className="py-20 text-center space-y-3">
-            <div className="w-10 h-10 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto" />
-            <p className="text-sm text-muted-foreground">Aggregating telemetry metrics...</p>
+            <div className="w-8 h-8 border-2 border-border border-t-primary animate-spin mx-auto" />
+            <p className="font-mono text-xs text-muted-foreground tracking-wider">READING STORE NOTES…</p>
           </div>
         ) : stats ? (
           <div className="space-y-8">
             {/* Stat Cards */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-              <Card className="border-border/80">
+              <Card className="border-border">
                 <CardHeader className="pb-2">
-                  <CardDescription className="text-xs uppercase font-semibold">Total Events</CardDescription>
-                  <CardTitle className="text-3xl font-extrabold text-foreground">
+                  <CardDescription className="font-mono text-[10px] tracking-wider uppercase text-muted-foreground">Total Events</CardDescription>
+                  <CardTitle className="font-display text-4xl font-normal text-foreground">
                     {stats.totalEvents.toLocaleString()}
                   </CardTitle>
                 </CardHeader>
@@ -96,10 +90,10 @@ export default function AdminAnalyticsPage() {
                 </CardContent>
               </Card>
 
-              <Card className="border-border/80">
+              <Card className="border-border">
                 <CardHeader className="pb-2">
-                  <CardDescription className="text-xs uppercase font-semibold">Unique Sessions</CardDescription>
-                  <CardTitle className="text-3xl font-extrabold text-primary">
+                  <CardDescription className="font-mono text-[10px] tracking-wider uppercase text-muted-foreground">Unique Sessions</CardDescription>
+                  <CardTitle className="font-display text-4xl font-normal text-forest">
                     {stats.totalSessions.toLocaleString()}
                   </CardTitle>
                 </CardHeader>
@@ -108,10 +102,10 @@ export default function AdminAnalyticsPage() {
                 </CardContent>
               </Card>
 
-              <Card className="border-border/80">
+              <Card className="border-border">
                 <CardHeader className="pb-2">
-                  <CardDescription className="text-xs uppercase font-semibold">Page Views</CardDescription>
-                  <CardTitle className="text-3xl font-extrabold text-secondary">
+                  <CardDescription className="font-mono text-[10px] tracking-wider uppercase text-muted-foreground">Page Views</CardDescription>
+                  <CardTitle className="font-display text-4xl font-normal text-dusty-teal">
                     {stats.totalPageViews.toLocaleString()}
                   </CardTitle>
                 </CardHeader>
@@ -120,10 +114,10 @@ export default function AdminAnalyticsPage() {
                 </CardContent>
               </Card>
 
-              <Card className="border-border/80">
+              <Card className="border-border">
                 <CardHeader className="pb-2">
-                  <CardDescription className="text-xs uppercase font-semibold">Product Views</CardDescription>
-                  <CardTitle className="text-3xl font-extrabold text-accent">
+                  <CardDescription className="font-mono text-[10px] tracking-wider uppercase text-muted-foreground">Product Views</CardDescription>
+                  <CardTitle className="font-display text-4xl font-normal text-clay">
                     {stats.totalProductViews.toLocaleString()}
                   </CardTitle>
                 </CardHeader>
@@ -146,7 +140,7 @@ export default function AdminAnalyticsPage() {
                     {stats.eventsByType.map((item) => (
                       <div
                         key={item.event_type}
-                        className="flex items-center justify-between p-3 rounded-xl bg-muted/30 border border-border/50 text-sm"
+                        className="analytics-row"
                       >
                         <span className="font-semibold text-foreground uppercase tracking-wider text-xs">
                           {item.event_type}
@@ -171,7 +165,7 @@ export default function AdminAnalyticsPage() {
                     {stats.topPages.map((item, idx) => (
                       <div
                         key={idx}
-                        className="flex items-center justify-between p-3 rounded-xl bg-muted/30 border border-border/50 text-sm"
+                        className="analytics-row"
                       >
                         <span className="font-medium text-foreground truncate max-w-[280px]">
                           {item.page}
@@ -226,7 +220,6 @@ export default function AdminAnalyticsPage() {
           </div>
         ) : null}
       </main>
-
       <Footer />
     </div>
   )

@@ -1,22 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import {
-  Sparkles,
-  ShieldCheck,
-  RotateCcw,
-  Heart,
-  Bookmark,
-  ThumbsDown,
-  FastForward,
-  Shirt,
-  Info,
-  Layers,
-  ArrowRight,
-  Palette,
-  Tag,
-  AlertTriangle,
-  CheckCircle,
-} from 'lucide-react'
 import { Navigation } from '@/components/navigation'
 import { Footer } from '@/components/footer'
 import { Button } from '@/components/ui/button'
@@ -66,7 +49,7 @@ export default function StyleDnaPage() {
     }
   }, [authLoading, user, navigate])
 
-  // Fetch Style DNA
+  // Fetch preference history
   const loadDna = useCallback(async () => {
     if (!user) return
     setLoading(true)
@@ -75,7 +58,7 @@ export default function StyleDnaPage() {
       const res = await api.styleDna.get()
       setData(res)
     } catch (err: any) {
-      setError(err?.message || 'Failed to load Style DNA.')
+      setError(err?.message || 'Could not load your pattern.')
     } finally {
       setLoading(false)
     }
@@ -95,7 +78,7 @@ export default function StyleDnaPage() {
       setResetModalOpen(false)
       await loadDna()
     } catch (err: any) {
-      setError(err?.message || 'Failed to reset Style DNA.')
+      setError(err?.message || 'Could not start your pattern over.')
     } finally {
       setResetting(false)
     }
@@ -109,22 +92,17 @@ export default function StyleDnaPage() {
       <div className="style-dna-header">
         <div className="style-dna-header-content">
           <div>
-            <div className="dna-badge-tag">
-              <Sparkles className="w-3.5 h-3.5" />
-              Transparent Behavioral DNA
-            </div>
-            <h1 className="dna-title">My Style DNA</h1>
+            <div className="dna-badge-tag">STYLESENSE / YOUR PATTERN</div>
+            <h1 className="dna-title">Your pattern.</h1>
             <p className="dna-subtitle">
-              Inspect your personalized clothing and color affinities. Every score is computed
-              deterministically from your feedback with mathematically bounded ranking influence.
+              A running record of the looks you keep, wear, and skip. Every score comes from your feedback.
             </p>
           </div>
 
           <div className="flex items-center gap-3">
             <Link to="/outfits">
               <Button variant="outline" className="gap-2">
-                <Layers className="w-4 h-4" />
-                Outfit Studio
+                THE FITTING ROOM
               </Button>
             </Link>
           </div>
@@ -133,26 +111,18 @@ export default function StyleDnaPage() {
 
       {/* Main Container */}
       <div className="dna-container">
-        {/* Transparency & Bounded Influence Banner */}
+        {/* How preference history influences suggestions */}
         <div className="dna-transparency-card">
-          <div className="transparency-icon-box">
-            <ShieldCheck className="w-6 h-6" />
-          </div>
           <div>
-            <h2 className="transparency-title">Transparent & Bounded Influence</h2>
+            <h2 className="transparency-title">A small nudge, with a clear ceiling.</h2>
             <p className="transparency-text">
-              Style DNA uses transparent frequency counts across interactions: <strong>Wore (+3.0)</strong>,{' '}
-              <strong>Saved (+2.0)</strong>, <strong>Liked (+1.0)</strong>, <strong>Skipped (-0.5)</strong>, and{' '}
-              <strong>Disliked (-2.0)</strong>. Ranking adjustments are capped at a maximum of{' '}
-              <strong>±{( (data?.influence_cap || 0.08) * 100).toFixed(0)}%</strong> so outfit validity,
-              seasonality, and occasion formality always dominate. No opaque neural networks or computer vision.
+              Your feedback gives future looks a small nudge. Occasion, season, and fit still come first.
             </p>
           </div>
         </div>
 
         {error && (
-          <div className="p-4 mb-6 rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 text-sm flex items-center gap-2">
-            <AlertTriangle className="w-4 h-4" />
+          <div className="p-4 mb-6 bg-destructive/10 border border-destructive/30 text-destructive text-sm flex items-center gap-2">
             <span>{error}</span>
           </div>
         )}
@@ -160,64 +130,58 @@ export default function StyleDnaPage() {
         {loading ? (
           <div className="p-12 text-center text-muted-foreground">
             <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-            <span>Loading Style DNA affinities…</span>
+            <span>READING YOUR PATTERN…</span>
           </div>
         ) : !data ? null : (
           <>
-            {/* Interaction Event Summary */}
+            {/* Feedback summary */}
             <div className="dna-metrics-grid">
               <div className="dna-metric-card">
                 <div className="metric-header">
-                  <span className="metric-label">Total Events</span>
-                  <span className="metric-icon">📊</span>
+                  <span className="metric-label">Total feedback</span>
                 </div>
                 <div className="metric-value">{data.total_events}</div>
-                <span className="text-xs text-muted-foreground">Logged actions</span>
+                <span className="text-xs text-muted-foreground">Across all your looks</span>
               </div>
 
               <div className="dna-metric-card">
                 <div className="metric-header">
                   <span className="metric-label">Wears</span>
-                  <span className="metric-icon">👔</span>
                 </div>
                 <div className="metric-value">{data.event_counts.wear}</div>
-                <span className="metric-weight-tag weight-positive">+3.0 weight</span>
+                <span className="metric-weight-tag weight-positive">Strong signal</span>
               </div>
 
               <div className="dna-metric-card">
                 <div className="metric-header">
                   <span className="metric-label">Saves</span>
-                  <span className="metric-icon">🔖</span>
                 </div>
                 <div className="metric-value">{data.event_counts.save}</div>
-                <span className="metric-weight-tag weight-positive">+2.0 weight</span>
+                <span className="metric-weight-tag weight-positive">Positive signal</span>
               </div>
 
               <div className="dna-metric-card">
                 <div className="metric-header">
                   <span className="metric-label">Likes</span>
-                  <span className="metric-icon">👍</span>
                 </div>
                 <div className="metric-value">{data.event_counts.like}</div>
-                <span className="metric-weight-tag weight-positive">+1.0 weight</span>
+                <span className="metric-weight-tag weight-positive">Positive signal</span>
               </div>
 
               <div className="dna-metric-card">
                 <div className="metric-header">
                   <span className="metric-label">Skips</span>
-                  <span className="metric-icon">⏭️</span>
                 </div>
                 <div className="metric-value">{data.event_counts.skip}</div>
-                <span className="metric-weight-tag weight-negative">-0.5 weight</span>
+                <span className="metric-weight-tag weight-negative">Light signal</span>
               </div>
 
               <div className="dna-metric-card">
                 <div className="metric-header">
                   <span className="metric-label">Dislikes</span>
-                  <span className="metric-icon">👎</span>
                 </div>
                 <div className="metric-value">{data.event_counts.dislike}</div>
-                <span className="metric-weight-tag weight-negative">-2.0 weight</span>
+                <span className="metric-weight-tag weight-negative">Strong signal</span>
               </div>
             </div>
 
@@ -226,8 +190,7 @@ export default function StyleDnaPage() {
               {/* Positive Affinities */}
               <div className="preference-panel">
                 <div className="panel-header">
-                  <CheckCircle className="w-5 h-5 text-emerald-400" />
-                  <span>Favorite Attributes</span>
+                  <span>What you keep</span>
                 </div>
                 {data.top_preferences.length > 0 ? (
                   <div className="chips-wrap">
@@ -249,8 +212,7 @@ export default function StyleDnaPage() {
               {/* Avoidances */}
               <div className="preference-panel">
                 <div className="panel-header">
-                  <ThumbsDown className="w-5 h-5 text-red-400" />
-                  <span>Avoided Attributes</span>
+                  <span>What you skip</span>
                 </div>
                 {data.avoidances.length > 0 ? (
                   <div className="chips-wrap">
@@ -274,8 +236,7 @@ export default function StyleDnaPage() {
             {data.affinities.colors && Object.keys(data.affinities.colors).length > 0 && (
               <div className="dna-gauges-section">
                 <h3 className="gauges-section-title">
-                  <Palette className="w-5 h-5 text-primary" />
-                  Color Affinities
+                  Colours you favor
                 </h3>
                 <div className="gauges-grid">
                   {Object.entries(data.affinities.colors).map(([color, score]) => {
@@ -313,8 +274,7 @@ export default function StyleDnaPage() {
             {data.affinities.categories && Object.keys(data.affinities.categories).length > 0 && (
               <div className="dna-gauges-section">
                 <h3 className="gauges-section-title">
-                  <Shirt className="w-5 h-5 text-primary" />
-                  Category & Silhouette Affinities
+                  Shapes and pieces you favor
                 </h3>
                 <div className="gauges-grid">
                   {Object.entries(data.affinities.categories).map(([category, score]) => {
@@ -345,8 +305,7 @@ export default function StyleDnaPage() {
             {data.affinities.styles && Object.keys(data.affinities.styles).length > 0 && (
               <div className="dna-gauges-section">
                 <h3 className="gauges-section-title">
-                  <Tag className="w-5 h-5 text-primary" />
-                  Style & Aesthetic Affinities
+                  Styles you favor
                 </h3>
                 <div className="gauges-grid">
                   {Object.entries(data.affinities.styles).map(([style, score]) => {
@@ -375,19 +334,15 @@ export default function StyleDnaPage() {
 
             {/* Empty state when no events yet */}
             {data.total_events === 0 && (
-              <div className="p-10 text-center rounded-xl bg-zinc-900/40 border border-zinc-800 mb-8">
-                <div className="w-12 h-12 rounded-xl bg-primary/10 text-primary flex items-center justify-center mx-auto mb-3">
-                  <Sparkles className="w-6 h-6" />
-                </div>
+              <div className="dna-empty-state">
                 <h3 className="text-lg font-bold text-foreground mb-1">No Feedback Recorded Yet</h3>
                 <p className="text-sm text-muted-foreground max-w-md mx-auto mb-4">
-                  Generate outfits in the studio and give feedback (like, dislike, save, wear) to train
-                  your transparent Style DNA.
+                    Give a few looks a quick rating in the fitting room to make your favorites clearer.
                 </p>
                 <Link to="/outfits">
                   <Button className="gap-2">
-                    Open Outfit Studio
-                    <ArrowRight className="w-4 h-4" />
+                  OPEN THE FITTING ROOM
+                    →
                   </Button>
                 </Link>
               </div>
@@ -396,11 +351,10 @@ export default function StyleDnaPage() {
             {/* Reset Action Footer */}
             <div className="dna-footer-actions">
               <div className="reset-warning-content">
-                <RotateCcw className="w-5 h-5 text-destructive flex-shrink-0" />
                 <div>
-                  <h4 className="reset-title">Reset Style DNA</h4>
+                  <h4 className="reset-title">Start your pattern over</h4>
                   <p className="reset-desc">
-                    Clear all recorded events and restore all affinities to neutral 50%.
+                    Clear your feedback history and return your pattern to a neutral starting point.
                   </p>
                 </div>
               </div>
@@ -411,7 +365,7 @@ export default function StyleDnaPage() {
                 onClick={() => setResetModalOpen(true)}
                 disabled={data.total_events === 0}
               >
-                Reset All Affinities
+                START OVER
               </Button>
             </div>
           </>
@@ -422,20 +376,17 @@ export default function StyleDnaPage() {
       {resetModalOpen && (
         <div className="reset-modal-backdrop" onClick={() => setResetModalOpen(false)}>
           <div className="reset-modal" onClick={(e) => e.stopPropagation()}>
-            <div className="w-12 h-12 rounded-xl bg-destructive/10 text-destructive flex items-center justify-center mb-4">
-              <AlertTriangle className="w-6 h-6" />
-            </div>
-            <h3 className="text-lg font-bold text-foreground mb-2">Reset Style DNA?</h3>
+            <h3 className="text-lg font-bold text-foreground mb-2">Start over?</h3>
             <p className="text-sm text-muted-foreground mb-6 leading-relaxed">
-              This will permanently delete all {data?.total_events || 0} interaction events and reset your
-              color, category, and style affinities back to neutral.
+              This will permanently delete all {data?.total_events || 0} feedback entries and reset your
+              color, category, and style preferences.
             </p>
             <div className="flex justify-end gap-3">
               <Button variant="outline" onClick={() => setResetModalOpen(false)} disabled={resetting}>
                 Cancel
               </Button>
               <Button variant="destructive" onClick={handleResetDna} disabled={resetting}>
-                {resetting ? 'Resetting…' : 'Yes, Reset Style DNA'}
+                {resetting ? 'RESETTING…' : 'YES, START OVER'}
               </Button>
             </div>
           </div>

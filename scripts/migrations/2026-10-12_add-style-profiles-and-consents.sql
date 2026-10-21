@@ -1,5 +1,6 @@
 -- ==============================================================================
 -- Forward-Only Migration: Style Profiles and User Consents
+-- Run fifth, after add-product-styling-attributes.sql.
 -- Date: 2026-10-12
 --
 -- Description:
@@ -45,7 +46,8 @@ create table if not exists public.style_profiles (
 alter table public.style_profiles enable row level security;
 
 -- Users can read/insert/update/delete only their own profile
-create policy if not exists "Users manage own style profile"
+drop policy if exists "Users manage own style profile" on public.style_profiles;
+create policy "Users manage own style profile"
   on public.style_profiles for all
   to authenticated
   using (auth.uid() = user_id)
@@ -76,7 +78,8 @@ create table if not exists public.user_consents (
 alter table public.user_consents enable row level security;
 
 -- Users can read/insert/update/delete only their own consent records
-create policy if not exists "Users manage own consents"
+drop policy if exists "Users manage own consents" on public.user_consents;
+create policy "Users manage own consents"
   on public.user_consents for all
   to authenticated
   using (auth.uid() = user_id)
@@ -96,3 +99,6 @@ create index if not exists idx_user_consents_user_type
 create index if not exists idx_style_profiles_body_type
   on public.style_profiles (body_type)
   where body_type is not null;
+
+grant select, insert, update, delete on public.style_profiles, public.user_consents to authenticated;
+grant all on public.style_profiles, public.user_consents to service_role;

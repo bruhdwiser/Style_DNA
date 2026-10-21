@@ -8,6 +8,7 @@ All data access uses the authenticated user's client (preserving RLS).
 from __future__ import annotations
 
 import logging
+import random
 from datetime import datetime, timezone
 from typing import Any, Optional
 from uuid import uuid4
@@ -25,6 +26,13 @@ from ..schemas.outfit import (
     OutfitResponse,
     OutfitSlotItem,
     SavedOutfitsListResponse,
+    SaveOutfitRequest,
+    SaveOutfitResponse,
+    UpdateOutfitTagsRequest,
+    APPROVED_OUTFIT_TAGS,
+    APPROVED_OUTFIT_TAGS_MAP,
+    validate_and_normalize_tags,
+    normalize_outfit_tags,
 )
 from ..schemas.style_dna import RecordOutfitEventRequest, OutfitEventResponse
 from ..schemas.user import AuthenticatedUser
@@ -34,6 +42,8 @@ from ..styling.gaps import rank_gaps
 from ..styling.generator import generate_outfits
 from ..styling.learning import calculate_affinities, compute_outfit_affinity_adjustment
 from ..styling.taxonomy import calculate_slot_coverage
+from ..styling.skeletons import CORE_SLOTS, OutfitCandidate, generate_candidates
+from ..styling.rules import hard_filter_candidate
 from .gaps import (
     _is_valid_uuid,
     _matches_audience,
@@ -165,7 +175,7 @@ async def _rephrase_explanation_with_openrouter(
                     "Authorization": f"Bearer {settings.OPENROUTER_API_KEY}",
                     "Content-Type": "application/json",
                     "HTTP-Referer": settings.SITE_URL,
-                    "X-Title": "FlashFit Fashion AI",
+                    "X-Title": "StyleSense Fashion AI",
                 },
                 json={
                     "model": settings.OPENROUTER_MODEL,
@@ -188,6 +198,39 @@ async def _rephrase_explanation_with_openrouter(
     return None
 
 
+def _persist_outfit_and_items(
+    client: Any,
+    outfit_row: dict[str, Any],
+    item_insert_rows: list[dict[str, Any]],
+) -> bool:
+    """Persist outfit and its item mappings atomically using PostgreSQL RPC save_outfit_with_items.
+
+    Returns True if successfully persisted in a single transaction; False if persistence failed.
+    Never returns True for an outfit ID whose database rows failed to persist, and refuses
+    non-atomic multi-step fallbacks to guarantee no orphaned outfit rows are left behind.
+    """
+    outfit_id = outfit_row["id"]
+    try:
+        rpc_res = client.rpc(
+            "save_outfit_with_items",
+            {"p_outfit": outfit_row, "p_items": item_insert_rows},
+        ).execute()
+        if rpc_res and rpc_res.data:
+            return True
+        logger.error(
+            f"Atomic persistence RPC save_outfit_with_items returned empty data for outfit {outfit_id}. "
+            "Refusing non-atomic fallback."
+        )
+        return False
+    except Exception as rpc_exc:
+        logger.error(
+            f"Atomic persistence via save_outfit_with_items failed for outfit {outfit_id}: {rpc_exc}. "
+            "Refusing non-atomic fallback to guarantee no orphaned outfit rows are created. "
+            "Deployment requirement: verify scripts/migrations/2026-10-21_save_outfit_rpc.sql is applied."
+        )
+        return False
+
+
 # ==============================================================================
 # Outfit Generation Endpoint
 # ==============================================================================
@@ -207,13 +250,24 @@ async def generate_outfit_recommendations(
 
     - Loads caller's wardrobe items and profile through user-scoped Supabase client (RLS).
     - Missing profile is treated as a warning (engine uses neutral defaults).
-    - Empty wardrobe or missing required slots returns a structured empty state.
-    - Wardrobe-only mode strictly excludes catalog items.
-    - Persists generated outfits and item mappings in PostgreSQL.
+    - Empty wardrobe returns a structured empty state.
+    - Catalog completion is enabled by default; wardrobe_only=True is a strict opt-out.
+    - Resolves shortfall: above-threshold wardrobe first, then eligible catalog items,
+      then unique below-threshold wardrobe looks marked with warnings.
+    - Persists generated outfits atomically, returning partial_results when fewer than limit.
     """
     client = get_user_scoped_supabase_client(token)
 
-    # 1. Fetch caller's wardrobe items (enforced by RLS)
+    # 1. Resolve effective catalog permission:
+    # Catalog completion enabled by default; wardrobe_only=True is a strict opt-out.
+    if body.wardrobe_only is True:
+        effective_allow_catalog = False
+    elif body.allow_one_new_item is False and body.wardrobe_only is False:
+        effective_allow_catalog = False
+    else:
+        effective_allow_catalog = True
+
+    # 2. Fetch caller's wardrobe items (enforced by RLS)
     try:
         wardrobe_res = (
             client.from_("wardrobe_items")
@@ -231,7 +285,7 @@ async def generate_outfit_recommendations(
 
     wardrobe_items: list[dict[str, Any]] = wardrobe_res.data or []
 
-    # 2. Check for empty wardrobe
+    # Check for empty wardrobe
     if not wardrobe_items:
         return GenerateOutfitsResponse(
             outfits=[],
@@ -240,29 +294,21 @@ async def generate_outfit_recommendations(
             missing_slots=["top", "bottom", "shoes"],
         )
 
-    # 3. Check for missing critical slots and fallback applicability
+    # 3. Check for missing critical slots
     coverage = calculate_slot_coverage(wardrobe_items)
     critical_missing = coverage.get("critical_missing") or []
 
-    fallback_triggered = False
-    fallback_reason: Optional[str] = None
-    fallback_slot: Optional[str] = None
-
     if not coverage.get("is_ready_for_outfits") and critical_missing:
-        # If user did not opt into catalog fallback or explicitly asked for wardrobe_only:
-        if body.wardrobe_only or not body.allow_one_new_item:
+        # If user explicitly opted out of catalog completion:
+        if not effective_allow_catalog:
             return GenerateOutfitsResponse(
                 outfits=[],
                 status="missing_required_slots",
                 message="Your wardrobe is missing required items to build outfits for this occasion.",
                 missing_slots=critical_missing,
             )
-        # Opted in to allow_one_new_item and wardrobe_only is False:
-        fallback_triggered = True
-        fallback_slot = critical_missing[0]
-        fallback_reason = f"missing_required_slot: {fallback_slot}"
 
-    # 4. Fetch caller's style profile (optional preferences)
+    # 4. Fetch caller's style profile (neutral styling defaults, never infer audience)
     profile_warning: Optional[str] = None
     body_shape: Optional[str] = None
     attrs: dict[str, Any] = {}
@@ -326,11 +372,22 @@ async def generate_outfit_recommendations(
     except Exception as exc:
         logger.debug(f"Could not load events for Style DNA affinities: {exc}")
 
-    # 7. Generate wardrobe-only outfits first (if wardrobe is ready)
     occasion = body.occasion.strip().lower()
     season = body.season.strip().lower()
 
-    wardrobe_candidates = []
+    # Unpack exclude_core_signatures if provided
+    exclude_cores: set[frozenset[tuple[str, str]]] = set()
+    if body.exclude_core_signatures:
+        for sig in body.exclude_core_signatures:
+            cleaned_pairs = []
+            for item in sig:
+                if isinstance(item, (list, tuple)) and len(item) == 2:
+                    cleaned_pairs.append((str(item[0]).strip().lower(), str(item[1]).strip()))
+            if cleaned_pairs:
+                exclude_cores.add(frozenset(cleaned_pairs))
+
+    # 7. Generate wardrobe-only candidates first
+    wardrobe_candidates: list[OutfitCandidate] = []
     if coverage.get("is_ready_for_outfits"):
         wardrobe_candidates = generate_outfits(
             engine_items,
@@ -339,44 +396,19 @@ async def generate_outfit_recommendations(
             body_shape=body_shape,
             attrs=attrs,
             affinities=affinities,
-            limit=body.limit,
+            seed=body.seed,
+            limit=max(12, body.limit * 2),
+            is_shuffle=body.is_shuffle,
+            exclude_core_signatures=exclude_cores if body.is_shuffle else None,
         )
 
-    # Check score threshold for wardrobe candidates
-    good_wardrobe_candidates = [
-        c
-        for c in wardrobe_candidates
-        if float(score_outfit(c, occasion=occasion, season=season, body_shape=body_shape, attrs=attrs))
-        >= body.min_quality_threshold
-    ]
-
-    # Evaluate fallback if opted-in and too few good outfits
-    if not fallback_triggered and body.allow_one_new_item and not body.wardrobe_only:
-        if len(wardrobe_candidates) == 0 or len(good_wardrobe_candidates) < min(3, body.limit):
-            fallback_triggered = True
-            fallback_reason = "insufficient_outfits_above_threshold" if wardrobe_candidates else "no_matching_combinations"
-            ranked = rank_gaps(engine_items, occasions=[occasion])
-            fallback_slot = ranked[0]["category"] if ranked else "top"
-
-    # If no wardrobe candidates and fallback not triggered, return structured empty state
-    if not wardrobe_candidates and not fallback_triggered:
-        return GenerateOutfitsResponse(
-            outfits=[],
-            status="no_matching_combinations",
-            message=f"No suitable outfits could be matched for '{body.occasion}'. Try adjusting the occasion or adding versatile pieces.",
-            missing_slots=[],
-            profile_warning=profile_warning,
-        )
-
-    # 8. Build and persist wardrobe-only outfit responses
-    now_iso = datetime.now(timezone.utc).isoformat()
-    wardrobe_responses: list[OutfitResponse] = []
+    # 8. Partition wardrobe candidates by quality threshold
+    above_threshold_wardrobe: list[tuple[float, OutfitCandidate, dict[str, float], list[str]]] = []
+    below_threshold_wardrobe: list[tuple[float, OutfitCandidate, dict[str, float], list[str]]] = []
 
     for cand in wardrobe_candidates:
-        outfit_id = str(uuid4())
         scores = feature_scores(cand, occasion=occasion, season=season, body_shape=body_shape, attrs=attrs)
         base_score = float(score_outfit(cand, occasion=occasion, season=season, body_shape=body_shape, attrs=attrs))
-
         affinity_delta, _ = compute_outfit_affinity_adjustment(cand, affinities) if affinities else (0.0, [])
         total_score = round(max(0.0, min(1.0, base_score + affinity_delta)), 3)
         if affinities and affinities.get("total_events"):
@@ -391,129 +423,92 @@ async def generate_outfit_recommendations(
             affinities=affinities,
         )
 
-        slot_items: list[OutfitSlotItem] = []
-        item_insert_rows: list[dict[str, Any]] = []
+        item_tuple = (total_score, cand, scores, reasons)
+        if total_score >= body.min_quality_threshold:
+            above_threshold_wardrobe.append(item_tuple)
+        else:
+            below_threshold_wardrobe.append(item_tuple)
 
-        for slot_name, item_dict in cand.slots.items():
-            item_id = str(item_dict.get("id", ""))
-            raw_meta = item_by_id.get(item_id, item_dict)
+    selected_looks: list[dict[str, Any]] = []
+    chosen_core_sigs: set[frozenset[tuple[str, str]]] = set()
+    chosen_item_sets: set[tuple[str, ...]] = set()
 
-            slot_item = _format_slot_item(raw_meta, slot_name, client, source_type="wardrobe")
-            slot_items.append(slot_item)
-
-            item_insert_rows.append({
-                "outfit_id": outfit_id,
-                "user_id": user.id,
-                "slot": slot_name,
-                "source_type": "wardrobe",
-                "wardrobe_item_id": item_id,
-                "product_id": None,
-                "created_at": now_iso,
-            })
-
-        outfit_row = {
-            "id": outfit_id,
-            "user_id": user.id,
-            "occasion": occasion,
-            "vibe": body.vibe or "casual",
-            "skeleton": cand.skeleton,
-            "score": round(float(total_score), 3),
-            "component_scores": {k: round(float(v), 3) for k, v in scores.items()},
+    for total_score, cand, scores, reasons in above_threshold_wardrobe[:body.limit]:
+        selected_looks.append({
+            "candidate": cand,
+            "score": total_score,
+            "scores": scores,
             "reasons": reasons,
-            "wardrobe_only": True,
-            "is_saved": False,
-            "metadata": {},
-            "created_at": now_iso,
-            "updated_at": now_iso,
-        }
+            "source_type": "wardrobe",
+            "is_below_threshold": False,
+            "quality_warning": None,
+            "catalog_product": None,
+        })
+        chosen_core_sigs.add(cand.core_signature)
+        chosen_item_sets.add(cand.item_ids)
 
-        try:
-            client.from_("outfits").insert(outfit_row).execute()
-            if item_insert_rows:
-                client.from_("outfit_items").insert(item_insert_rows).execute()
-        except Exception as exc:
-            logger.warning(f"Could not persist wardrobe outfit {outfit_id}: {exc}")
+    # Shortfall is requested count minus distinct wardrobe looks meeting the quality threshold
+    shortfall = max(0, body.limit - len(selected_looks))
 
-        ai_summary = None
-        if len(wardrobe_responses) == 0:
-            ai_summary = await _rephrase_explanation_with_openrouter(
-                items=slot_items,
-                reasons=reasons,
-                occasion=occasion,
-                vibe=body.vibe,
-            )
-
-        wardrobe_responses.append(
-            OutfitResponse(
-                id=outfit_id,
-                user_id=user.id,
-                occasion=occasion,
-                vibe=body.vibe,
-                skeleton=cand.skeleton,
-                score=round(float(total_score), 3),
-                component_scores={k: round(float(v), 3) for k, v in scores.items()},
-                reasons=reasons,
-                ai_summary=ai_summary,
-                wardrobe_only=True,
-                is_saved=False,
-                items=slot_items,
-                created_at=now_iso,
-            )
-        )
-
-    # 9. If fallback is triggered, generate mixed looks with up to 1 catalog product
-    mixed_responses: list[OutfitResponse] = []
+    # 9. Catalog completion to fill shortfall (if allowed)
+    budget_cents = int(body.budget_max * 100) if body.budget_max is not None and body.budget_max > 0 else None
     budget_status: Optional[str] = None
-    no_products_in_budget: bool = False
+    no_products_in_budget = False
     cheapest_alt: Optional[dict[str, Any]] = None
+    above_threshold_mixed: list[tuple[float, OutfitCandidate, dict[str, float], list[str], dict[str, Any]]] = []
+    below_threshold_mixed: list[tuple[float, OutfitCandidate, dict[str, float], list[str], dict[str, Any]]] = []
 
-    if fallback_triggered and fallback_slot:
+    if shortfall > 0 and effective_allow_catalog:
         try:
-            products_res = client.from_("products").select("*").execute()
+            products_res = (
+                client.from_("products")
+                .select("*")
+                .in_("audience", ["unisex", "all"])
+                .execute()
+            )
             all_catalog_products = products_res.data or []
         except Exception as exc:
-            logger.warning(f"Could not load catalog products for fallback: {exc}")
+            logger.warning(f"Could not load catalog products for completion: {exc}")
             all_catalog_products = []
 
+        # Strict audience filter: only 'unisex' or 'all' (never infer audience from image/name/body_shape)
         eligible_products = [
-            p
-            for p in all_catalog_products
-            if _is_valid_uuid(p.get("id")) and _matches_audience(p.get("audience"))
+            p for p in all_catalog_products
+            if _is_valid_uuid(p.get("id"))
+            and str(p.get("audience", "all")).strip().lower() in ("unisex", "all")
         ]
 
+        # Filter products matching occasion
         matching_catalog_items = [
-            p
-            for p in eligible_products
-            if _matches_slot(p.get("slot"), p.get("category"), fallback_slot)
-            and _matches_occasion(p.get("occasions"), occasion)
+            p for p in eligible_products
+            if _matches_occasion(p.get("occasions"), occasion)
         ]
         matching_catalog_items.sort(key=lambda p: int(p.get("price_cents") or 0))
-
-        budget_cents = int(body.budget_max * 100) if body.budget_max is not None and body.budget_max > 0 else None
 
         if budget_cents is not None:
             in_budget_items = [p for p in matching_catalog_items if int(p.get("price_cents") or 0) <= budget_cents]
             if in_budget_items:
-                selected_prods = in_budget_items[:2]
+                candidate_products = in_budget_items[:30]
                 budget_status = "within_budget"
             elif matching_catalog_items:
                 no_products_in_budget = True
                 budget_status = "no_products_in_budget"
                 cheapest_alt = _to_catalog_suggestion(matching_catalog_items[0]).model_dump()
-                selected_prods = []
+                candidate_products = []
             else:
-                selected_prods = []
+                candidate_products = []
                 budget_status = "no_products_found"
         else:
-            selected_prods = matching_catalog_items[:2]
+            candidate_products = matching_catalog_items[:30]
             budget_status = "within_budget" if matching_catalog_items else "no_products_found"
 
-        for prod in selected_prods:
+        for prod in candidate_products:
+            p_slot = str(prod.get("slot") or prod.get("category", "top")).strip().lower()
             catalog_item_id = f"catalog_{prod['id']}"
             cat_engine_item = {
                 "id": catalog_item_id,
-                "category": prod.get("slot") or prod.get("category", fallback_slot),
-                "slot": prod.get("slot", fallback_slot),
+                "category": p_slot,
+                "slot": p_slot,
                 "sub_category": prod.get("subtype") or prod.get("name"),
                 "color": (prod.get("color_tags") or ["#111827"])[0],
                 "colors": prod.get("color_tags") or [],
@@ -527,26 +522,28 @@ async def generate_outfit_recommendations(
                 "source_type": "catalog",
             }
 
-            mixed_candidates = generate_outfits(
-                [*engine_items, cat_engine_item],
-                occasion=occasion,
-                season=season,
-                body_shape=body_shape,
-                attrs=attrs,
-                affinities=affinities,
-                limit=3,
-            )
-
-            # Filter candidates to only those containing this catalog item
-            for cand in mixed_candidates:
+            all_skeletons = generate_candidates([*engine_items, cat_engine_item])
+            for cand in all_skeletons:
+                # Must contain this catalog item
                 if catalog_item_id not in cand.item_ids:
                     continue
+                # Must contain at least one wardrobe item
+                if all(it_id == catalog_item_id for it_id in cand.item_ids):
+                    continue
+                # Must contain exactly one catalog item
+                if sum(1 for it_id in cand.item_ids if it_id.startswith("catalog_")) != 1:
+                    continue
+                # Hard rules & anti-clash
+                if not hard_filter_candidate(cand, occasion, season):
+                    continue
 
-                outfit_id = str(uuid4())
-                scores = feature_scores(cand, occasion=occasion, season=season, body_shape=body_shape, attrs=attrs)
                 base_score = float(score_outfit(cand, occasion=occasion, season=season, body_shape=body_shape, attrs=attrs))
                 affinity_delta, _ = compute_outfit_affinity_adjustment(cand, affinities) if affinities else (0.0, [])
                 total_score = round(max(0.0, min(1.0, base_score + affinity_delta)), 3)
+
+                scores = feature_scores(cand, occasion=occasion, season=season, body_shape=body_shape, attrs=attrs)
+                if affinities and affinities.get("total_events"):
+                    scores["style_dna"] = round(max(0.0, min(1.0, 0.5 + (affinity_delta / 0.16))), 3)
 
                 reasons = explain_outfit(
                     cand,
@@ -556,111 +553,289 @@ async def generate_outfit_recommendations(
                     attrs=attrs,
                     affinities=affinities,
                 )
-                reasons.append(f"Mixed look adding {prod.get('name', 'catalog product')} to complete {fallback_slot} slot.")
+                reasons.append(f"Completed look adding {prod.get('name', 'catalog product')} to complete the {p_slot} slot.")
 
-                slot_items = []
-                item_insert_rows = []
+                item_payload = (total_score, cand, scores, reasons, prod)
+                if total_score >= body.min_quality_threshold:
+                    above_threshold_mixed.append(item_payload)
+                else:
+                    below_threshold_mixed.append(item_payload)
 
-                for slot_name, item_dict in cand.slots.items():
-                    raw_id = str(item_dict.get("id", ""))
-                    if raw_id == catalog_item_id:
-                        slot_item = _format_slot_item(prod, slot_name, client, source_type="catalog", product=prod)
-                        slot_items.append(slot_item)
-                        item_insert_rows.append({
-                            "outfit_id": outfit_id,
-                            "user_id": user.id,
-                            "slot": slot_name,
-                            "source_type": "catalog",
-                            "wardrobe_item_id": None,
-                            "product_id": str(prod["id"]),
-                            "created_at": now_iso,
-                        })
-                    else:
-                        raw_meta = item_by_id.get(raw_id, item_dict)
-                        slot_item = _format_slot_item(raw_meta, slot_name, client, source_type="wardrobe")
-                        slot_items.append(slot_item)
-                        item_insert_rows.append({
-                            "outfit_id": outfit_id,
-                            "user_id": user.id,
-                            "slot": slot_name,
-                            "source_type": "wardrobe",
-                            "wardrobe_item_id": raw_id,
-                            "product_id": None,
-                            "created_at": now_iso,
-                        })
+        # Sort candidate pools by score descending, then stable core signature
+        sort_key = lambda item: (
+            round(-item[0], 4),
+            tuple(sorted(item[1].core_signature)),
+            item[1].item_ids,
+        )
+        above_threshold_mixed.sort(key=sort_key)
+        below_threshold_mixed.sort(key=sort_key)
 
-                metadata_payload = {
-                    "fallback_reason": fallback_reason,
-                    "unlocked_by_product_id": str(prod["id"]),
-                }
+        # Fill shortfall with above-threshold mixed looks
+        for total_score, cand, scores, reasons, prod in above_threshold_mixed:
+            if cand.item_ids in chosen_item_sets:
+                continue
+            if body.is_shuffle and cand.core_signature in exclude_cores:
+                continue
+            is_core_repeat = cand.core_signature in chosen_core_sigs
+            if is_core_repeat and len(above_threshold_mixed) > shortfall:
+                continue
 
-                outfit_row = {
-                    "id": outfit_id,
-                    "user_id": user.id,
-                    "occasion": occasion,
-                    "vibe": body.vibe or "casual",
-                    "skeleton": cand.skeleton,
-                    "score": round(float(total_score), 3),
-                    "component_scores": {k: round(float(v), 3) for k, v in scores.items()},
-                    "reasons": reasons,
-                    "wardrobe_only": False,
-                    "is_saved": False,
-                    "metadata": metadata_payload,
-                    "created_at": now_iso,
-                    "updated_at": now_iso,
-                }
+            selected_looks.append({
+                "candidate": cand,
+                "score": total_score,
+                "scores": scores,
+                "reasons": reasons,
+                "source_type": "mixed",
+                "is_below_threshold": False,
+                "quality_warning": None,
+                "catalog_product": prod,
+            })
+            chosen_core_sigs.add(cand.core_signature)
+            chosen_item_sets.add(cand.item_ids)
+            shortfall -= 1
+            if shortfall == 0:
+                break
 
-                try:
-                    client.from_("outfits").insert(outfit_row).execute()
-                    if item_insert_rows:
-                        client.from_("outfit_items").insert(item_insert_rows).execute()
-                except Exception as exc:
-                    logger.warning(f"Could not persist mixed outfit {outfit_id}: {exc}")
+    # 10. Fall back to below-threshold unique looks (wardrobe first, then mixed) if shortfall remains
+    below_threshold_included = 0
+    if shortfall > 0 and (below_threshold_wardrobe or below_threshold_mixed):
+        # 10a. Wardrobe below-threshold looks
+        for total_score, cand, scores, reasons in below_threshold_wardrobe:
+            if cand.item_ids in chosen_item_sets:
+                continue
+            if body.is_shuffle and cand.core_signature in exclude_cores:
+                continue
+            quality_warn = (
+                f"Compatibility score {total_score:.2f} is below your preferred quality threshold "
+                f"({body.min_quality_threshold:.2f}); included as a last-resort alternative."
+            )
+            selected_looks.append({
+                "candidate": cand,
+                "score": total_score,
+                "scores": scores,
+                "reasons": reasons,
+                "source_type": "wardrobe",
+                "is_below_threshold": True,
+                "quality_warning": quality_warn,
+                "catalog_product": None,
+            })
+            chosen_core_sigs.add(cand.core_signature)
+            chosen_item_sets.add(cand.item_ids)
+            below_threshold_included += 1
+            shortfall -= 1
+            if shortfall == 0:
+                break
 
-                mixed_responses.append(
-                    OutfitResponse(
-                        id=outfit_id,
-                        user_id=user.id,
-                        occasion=occasion,
-                        vibe=body.vibe,
-                        skeleton=cand.skeleton,
-                        score=round(float(total_score), 3),
-                        component_scores={k: round(float(v), 3) for k, v in scores.items()},
-                        reasons=reasons,
-                        ai_summary=ai_summary,
-                        wardrobe_only=False,
-                        fallback_reason=fallback_reason,
-                        unlocked_by_product_id=str(prod["id"]),
-                        is_saved=False,
-                        items=slot_items,
-                        created_at=now_iso,
-                    )
+        # 10b. Mixed below-threshold looks (for sparse wardrobes with limited combinations)
+        if shortfall > 0:
+            for total_score, cand, scores, reasons, prod in below_threshold_mixed:
+                if cand.item_ids in chosen_item_sets:
+                    continue
+                if body.is_shuffle and cand.core_signature in exclude_cores:
+                    continue
+                quality_warn = (
+                    f"Compatibility score {total_score:.2f} is below your preferred quality threshold "
+                    f"({body.min_quality_threshold:.2f}); completed with store piece as an alternative."
                 )
+                selected_looks.append({
+                    "candidate": cand,
+                    "score": total_score,
+                    "scores": scores,
+                    "reasons": reasons,
+                    "source_type": "mixed",
+                    "is_below_threshold": True,
+                    "quality_warning": quality_warn,
+                    "catalog_product": prod,
+                })
+                chosen_core_sigs.add(cand.core_signature)
+                chosen_item_sets.add(cand.item_ids)
+                below_threshold_included += 1
+                shortfall -= 1
+                if shortfall == 0:
+                    break
 
-    # 10. Combine: Return wardrobe-only outfits first, then mixed looks
-    combined_outfits = (wardrobe_responses + mixed_responses)[:body.limit]
-
-    outfit_status = "success"
-    if not combined_outfits:
-        if critical_missing:
-            outfit_status = "missing_required_slots"
+    # If no looks at all could be matched, return structured empty state
+    if not selected_looks:
+        if body.is_shuffle and exclude_cores:
+            return GenerateOutfitsResponse(
+                outfits=[],
+                status="no_matching_combinations",
+                message=f"No further unseen combinations could be created from your rack for '{body.occasion}'. All valid looks have been shown.",
+                missing_slots=[],
+                profile_warning=profile_warning,
+                budget_status=budget_status,
+                no_products_in_budget=no_products_in_budget,
+                cheapest_alternative=cheapest_alt,
+            )
+        status_val = "missing_required_slots" if critical_missing else "no_matching_combinations"
+        if no_products_in_budget:
+            msg_val = "No catalog products within your budget could complete an outfit. Consider the cheapest alternative."
+        elif critical_missing and effective_allow_catalog:
+            msg_val = "Your wardrobe is missing required items for this occasion, and no eligible store pieces could complete a look."
+        elif critical_missing:
+            msg_val = "Your wardrobe is missing required items to build outfits for this occasion."
         else:
-            outfit_status = "no_matching_combinations"
+            msg_val = f"No suitable outfits could be matched for '{body.occasion}'. Try adjusting the occasion or adding versatile pieces."
+
+        return GenerateOutfitsResponse(
+            outfits=[],
+            status=status_val,
+            message=msg_val,
+            missing_slots=critical_missing,
+            profile_warning=profile_warning,
+            budget_status=budget_status,
+            no_products_in_budget=no_products_in_budget,
+            cheapest_alternative=cheapest_alt,
+        )
+
+    # 11. Persist outfits atomically and build responses
+    now_iso = datetime.now(timezone.utc).isoformat()
+    persisted_outfits: list[OutfitResponse] = []
+
+    for look in selected_looks:
+        outfit_id = str(uuid4())
+        cand = look["candidate"]
+        total_score = look["score"]
+        scores = look["scores"]
+        reasons = look["reasons"]
+        is_mixed = look["source_type"] == "mixed"
+        prod = look["catalog_product"]
+        is_below = look["is_below_threshold"]
+        q_warn = look["quality_warning"]
+
+        slot_items: list[OutfitSlotItem] = []
+        item_insert_rows: list[dict[str, Any]] = []
+
+        for slot_name, item_dict in cand.slots.items():
+            raw_id = str(item_dict.get("id", ""))
+            if is_mixed and prod and raw_id == f"catalog_{prod['id']}":
+                slot_item = _format_slot_item(prod, slot_name, client, source_type="catalog", product=prod)
+                slot_items.append(slot_item)
+                item_insert_rows.append({
+                    "outfit_id": outfit_id,
+                    "user_id": user.id,
+                    "slot": slot_name,
+                    "source_type": "catalog",
+                    "wardrobe_item_id": None,
+                    "product_id": str(prod["id"]),
+                    "created_at": now_iso,
+                })
+            else:
+                raw_meta = item_by_id.get(raw_id, item_dict)
+                slot_item = _format_slot_item(raw_meta, slot_name, client, source_type="wardrobe")
+                slot_items.append(slot_item)
+                item_insert_rows.append({
+                    "outfit_id": outfit_id,
+                    "user_id": user.id,
+                    "slot": slot_name,
+                    "source_type": "wardrobe",
+                    "wardrobe_item_id": raw_id,
+                    "product_id": None,
+                    "created_at": now_iso,
+                })
+
+        metadata_payload: dict[str, Any] = {}
+        if is_mixed and prod:
+            metadata_payload["fallback_reason"] = "shortfall_catalog_completion"
+            metadata_payload["unlocked_by_product_id"] = str(prod["id"])
+        if is_below:
+            metadata_payload["quality_warning"] = q_warn
+
+        outfit_row = {
+            "id": outfit_id,
+            "user_id": user.id,
+            "occasion": occasion,
+            "vibe": body.vibe or "casual",
+            "skeleton": cand.skeleton,
+            "score": round(float(total_score), 3),
+            "component_scores": {k: round(float(v), 3) for k, v in scores.items()},
+            "reasons": reasons,
+            "wardrobe_only": not is_mixed,
+            "is_saved": False,
+            "metadata": metadata_payload,
+            "created_at": now_iso,
+            "updated_at": now_iso,
+        }
+
+        # Atomic persistence check: never return an outfit if database insert fails
+        persisted = _persist_outfit_and_items(client, outfit_row, item_insert_rows)
+        if not persisted:
+            logger.error(f"Persistence failed for outfit {outfit_id}; skipping from response.")
+            continue
+
+        ai_summary = None
+        if len(persisted_outfits) == 0:
+            ai_summary = await _rephrase_explanation_with_openrouter(
+                items=slot_items,
+                reasons=reasons,
+                occasion=occasion,
+                vibe=body.vibe,
+            )
+
+        persisted_outfits.append(
+            OutfitResponse(
+                id=outfit_id,
+                user_id=user.id,
+                occasion=occasion,
+                vibe=body.vibe,
+                skeleton=cand.skeleton,
+                score=round(float(total_score), 3),
+                component_scores={k: round(float(v), 3) for k, v in scores.items()},
+                reasons=reasons,
+                ai_summary=ai_summary,
+                wardrobe_only=not is_mixed,
+                fallback_reason="shortfall_catalog_completion" if is_mixed else None,
+                unlocked_by_product_id=str(prod["id"]) if is_mixed and prod else None,
+                is_saved=False,
+                is_below_threshold=is_below,
+                quality_warning=q_warn,
+                core_signature=sorted(list(cand.core_signature)),
+                items=slot_items,
+                created_at=now_iso,
+            )
+        )
+
+    # If all persistence attempts failed, surface database error
+    if selected_looks and not persisted_outfits:
+        raise AppException(
+            message=(
+                "Database persistence failed for all generated recommendations. "
+                "Ensure save_outfit_with_items RPC migration has been applied."
+            ),
+            code="OUTFIT_PERSISTENCE_ERROR",
+            status_code=500,
+        )
+
+    # 12. Determine status and messages
+    status_val = "partial_results" if len(persisted_outfits) < body.limit else "success"
 
     message = None
     if no_products_in_budget:
         message = "No catalog products within your budget could complete an outfit. Consider the cheapest alternative."
-    elif mixed_responses and wardrobe_responses:
+    elif any(not o.wardrobe_only for o in persisted_outfits) and any(o.wardrobe_only for o in persisted_outfits):
         message = "Showing your wardrobe outfits followed by recommended mixed looks."
-    elif mixed_responses and not wardrobe_responses:
-        message = "Wardrobe was missing a required slot; showing outfits unlocked by catalog items."
+    elif any(not o.wardrobe_only for o in persisted_outfits) and not any(o.wardrobe_only for o in persisted_outfits):
+        message = "Showing outfits completed with catalog items to meet your selection."
+    elif status_val == "partial_results":
+        if body.is_shuffle and exclude_cores:
+            message = f"Found {len(persisted_outfits)} alternative outfit(s) for '{occasion}'. No further unseen combinations remain on your rack."
+        else:
+            message = f"Found {len(persisted_outfits)} unique valid outfits for '{occasion}' without repeating core garments."
+
+    quality_warning_summary = None
+    if below_threshold_included > 0:
+        quality_warning_summary = (
+            f"{below_threshold_included} outfit(s) fall below the {body.min_quality_threshold:.2f} quality threshold "
+            f"due to limited high-compatibility pieces in your wardrobe."
+        )
 
     return GenerateOutfitsResponse(
-        outfits=combined_outfits,
-        status=outfit_status,
+        outfits=persisted_outfits,
+        status=status_val,
         message=message,
-        missing_slots=critical_missing if not combined_outfits else [],
+        missing_slots=[],
         profile_warning=profile_warning,
+        quality_warning=quality_warning_summary,
         budget_status=budget_status,
         no_products_in_budget=no_products_in_budget,
         cheapest_alternative=cheapest_alt,
@@ -675,25 +850,47 @@ async def generate_outfit_recommendations(
 @router.get(
     "/saved",
     response_model=SavedOutfitsListResponse,
-    summary="Get caller's saved looks",
+    summary="Get caller's saved looks, optionally filtered by tag",
 )
 async def list_saved_outfits(
+    tag: Optional[str] = Query(None, description="Optional tag filter (e.g. Work, Date Night, Wedding, Vacation, Try Later)"),
     token: str = Depends(get_current_token),
     user: AuthenticatedUser = Depends(get_current_user),
 ):
-    """Retrieves all outfits bookmarked/saved by the caller with populated items."""
+    """Retrieves all outfits bookmarked/saved by the caller with populated items, optionally filtered by tag."""
     client = get_user_scoped_supabase_client(token)
 
+    canonical_tag = None
+    if tag is not None:
+        clean_tag = " ".join(tag.strip().split())
+        if not clean_tag:
+            raise AppException(
+                message=f"Empty tag filter is not permitted. Approved tags are: {', '.join(APPROVED_OUTFIT_TAGS)}.",
+                code="INVALID_TAG",
+                status_code=422,
+            )
+        canonical_tag = APPROVED_OUTFIT_TAGS_MAP.get(clean_tag.lower())
+        if not canonical_tag:
+            raise AppException(
+                message=f"Unsupported tag filter '{tag}'. Approved tags are: {', '.join(APPROVED_OUTFIT_TAGS)}.",
+                code="INVALID_TAG",
+                status_code=422,
+            )
+
     try:
-        outfits_res = (
+        query = (
             client.from_("outfits")
             .select("*")
             .eq("user_id", user.id)
             .eq("is_saved", True)
             .order("updated_at", desc=True)
-            .execute()
         )
+        if canonical_tag:
+            query = query.contains("tags", [canonical_tag])
+        outfits_res = query.execute()
     except Exception as exc:
+        if isinstance(exc, AppException):
+            raise exc
         logger.error(f"Failed to fetch saved outfits for user {user.id}: {exc}")
         raise AppException(
             message="Unable to retrieve saved outfits.",
@@ -703,7 +900,7 @@ async def list_saved_outfits(
 
     outfit_rows = outfits_res.data or []
     if not outfit_rows:
-        return SavedOutfitsListResponse(outfits=[], total=0)
+        return SavedOutfitsListResponse(outfits=[], total=0, available_tags=[])
 
     outfit_ids = [r["id"] for r in outfit_rows]
 
@@ -734,9 +931,20 @@ async def list_saved_outfits(
             items_by_outfit.setdefault(outfit_id, []).append(formatted)
 
     results: list[OutfitResponse] = []
+    user_tags: set[str] = set()
+
     for r in outfit_rows:
         o_id = r["id"]
         meta = r.get("metadata") or {}
+        row_tags = r.get("tags") or []
+        for t in row_tags:
+            user_tags.add(t)
+        o_items = items_by_outfit.get(o_id, [])
+        saved_core_sig: list[tuple[str, str]] = sorted([
+            (it.slot, str(it.wardrobe_item_id or it.product_id or ""))
+            for it in o_items
+            if it.slot in CORE_SLOTS and (it.wardrobe_item_id or it.product_id)
+        ])
         results.append(
             OutfitResponse(
                 id=o_id,
@@ -751,31 +959,185 @@ async def list_saved_outfits(
                 fallback_reason=meta.get("fallback_reason"),
                 unlocked_by_product_id=meta.get("unlocked_by_product_id"),
                 is_saved=True,
-                items=items_by_outfit.get(o_id, []),
+                tags=row_tags,
+                core_signature=saved_core_sig,
+                items=o_items,
                 created_at=str(r.get("created_at", "")),
             )
         )
 
-    return SavedOutfitsListResponse(outfits=results, total=len(results))
+    return SavedOutfitsListResponse(
+        outfits=results,
+        total=len(results),
+        available_tags=sorted(list(user_tags)),
+    )
+
+
+def _extract_outfit_event_metadata(
+    client: Any,
+    outfit_id: str,
+    outfit_row: dict[str, Any],
+    extra_metadata: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    """Extracts styling attributes from outfit_items for Style DNA affinity learning.
+
+    Covers both wardrobe items and catalog products without fabricating wardrobe attributes.
+    """
+    colors: set[str] = set()
+    categories: set[str] = set()
+    styles: set[str] = set()
+
+    def _collect(target: set[str], val: Any) -> None:
+        if not val:
+            return
+        if isinstance(val, (list, tuple, set)):
+            for v in val:
+                if v:
+                    target.add(str(v).strip().lower())
+        else:
+            target.add(str(val).strip().lower())
+
+    try:
+        items_res = (
+            client.from_("outfit_items")
+            .select(
+                "slot, source_type, wardrobe_items(category, slot, sub_category, primary_color, color_tags, style_tags), products(category, slot, subtype, color_tags, colors, style_tags)"
+            )
+            .eq("outfit_id", outfit_id)
+            .execute()
+        )
+        for row in (items_res.data or []):
+            _collect(categories, row.get("slot"))
+
+            # 1. Wardrobe items
+            w_item = row.get("wardrobe_items") or {}
+            _collect(categories, w_item.get("category"))
+            _collect(categories, w_item.get("sub_category"))
+            _collect(colors, w_item.get("primary_color"))
+            _collect(colors, w_item.get("color_tags"))
+            _collect(styles, w_item.get("style_tags"))
+
+            # 2. Catalog products (without fabricating wardrobe attributes)
+            p_item = row.get("products") or {}
+            _collect(categories, p_item.get("category"))
+            _collect(categories, p_item.get("slot"))
+            _collect(categories, p_item.get("subtype"))
+            _collect(colors, p_item.get("color_tags"))
+            _collect(colors, p_item.get("colors"))
+            _collect(styles, p_item.get("style_tags"))
+    except Exception as exc:
+        logger.debug(f"Could not load items for event metadata: {exc}")
+
+    metadata = {
+        "colors": sorted(list(colors)),
+        "categories": sorted(list(categories)),
+        "styles": sorted(list(styles)),
+        "occasion": outfit_row.get("occasion"),
+    }
+    if extra_metadata:
+        metadata.update(extra_metadata)
+    return metadata
 
 
 @router.post(
     "/{outfit_id}/save",
-    summary="Save / bookmark an outfit look",
+    response_model=SaveOutfitResponse,
+    summary="Save / bookmark an outfit look for later with optional tags",
 )
 async def save_outfit(
     outfit_id: str,
+    body: Optional[SaveOutfitRequest] = None,
     token: str = Depends(get_current_token),
     user: AuthenticatedUser = Depends(get_current_user),
 ):
-    """Marks an outfit as saved/bookmarked."""
+    """Marks an outfit as saved for later with optional tags.
+
+    - Normalizes tags to approved canonical set, defaulting to ['Try Later'].
+    - Fail-Closed Consistency (Option A): Ensures saving a look and recording its
+      Style DNA interaction are consistent. If recording the save event fails,
+      the save operation fails with HTTP 500 and the outfit is not saved.
+    - Idempotency: Repeated saves or retagging on an already-saved look update tags
+      without creating duplicate outfit_events save interactions.
+    """
     client = get_user_scoped_supabase_client(token)
     now_iso = datetime.now(timezone.utc).isoformat()
+    tags = normalize_outfit_tags(body.tags if body else None)
 
+    try:
+        outfit_res = (
+            client.from_("outfits")
+            .select("id, user_id, occasion, vibe, skeleton, is_saved, tags")
+            .eq("id", outfit_id)
+            .eq("user_id", user.id)
+            .limit(1)
+            .execute()
+        )
+    except Exception as exc:
+        logger.error(f"Failed to query outfit {outfit_id} for save: {exc}")
+        raise AppException(message="Unable to verify outfit.", code="SAVE_ERROR", status_code=500)
+
+    if not outfit_res.data:
+        raise AppException(message="Outfit not found or unauthorized.", code="NOT_FOUND", status_code=404)
+
+    outfit_row = outfit_res.data[0]
+
+    # Idempotent Style DNA Event Recording:
+    # Check if a save event was already recorded for this user and outfit.
+    has_existing_save_event = False
+    try:
+        existing_event = (
+            client.from_("outfit_events")
+            .select("id")
+            .eq("user_id", user.id)
+            .eq("outfit_id", outfit_id)
+            .eq("event_type", "save")
+            .limit(1)
+            .execute()
+        )
+        if existing_event.data:
+            has_existing_save_event = True
+    except Exception as ev_check_exc:
+        logger.error(f"Failed to check existing save events for outfit {outfit_id}: {ev_check_exc}")
+        raise AppException(
+            message="Unable to verify outfit interaction state.",
+            code="SAVE_EVENT_ERROR",
+            status_code=500,
+        )
+
+    # Fail-Closed Consistency (Option A):
+    # If this is the initial save (or no save event has been recorded yet),
+    # record the save event FIRST. If event recording fails, fail immediately
+    # without updating the outfits table so is_saved remains False.
+    if not has_existing_save_event:
+        event_metadata = _extract_outfit_event_metadata(
+            client=client,
+            outfit_id=outfit_id,
+            outfit_row=outfit_row,
+            extra_metadata={"tags": tags},
+        )
+        event_row = {
+            "id": str(uuid4()),
+            "user_id": user.id,
+            "outfit_id": outfit_id,
+            "event_type": "save",
+            "metadata": event_metadata,
+            "created_at": now_iso,
+        }
+        try:
+            client.from_("outfit_events").insert(event_row).execute()
+        except Exception as ev_exc:
+            logger.error(f"Failed to record save interaction for outfit {outfit_id}: {ev_exc}")
+            raise AppException(
+                message="Unable to record save interaction. Outfit was not saved.",
+                code="SAVE_EVENT_ERROR",
+                status_code=500,
+            )
+
+    # Update outfits table to persist saved status and normalized tags
     try:
         res = (
             client.from_("outfits")
-            .update({"is_saved": True, "updated_at": now_iso})
+            .update({"is_saved": True, "tags": tags, "updated_at": now_iso})
             .eq("id", outfit_id)
             .eq("user_id", user.id)
             .execute()
@@ -787,7 +1149,50 @@ async def save_outfit(
     if not res.data:
         raise AppException(message="Outfit not found or unauthorized.", code="NOT_FOUND", status_code=404)
 
-    return {"success": True, "message": "Outfit saved to your collection."}
+    return SaveOutfitResponse(
+        success=True,
+        message="Outfit saved for later.",
+        is_saved=True,
+        tags=tags,
+    )
+
+
+@router.put(
+    "/{outfit_id}/tags",
+    summary="Update tags on an already-saved outfit",
+)
+async def update_outfit_tags(
+    outfit_id: str,
+    body: UpdateOutfitTagsRequest,
+    token: str = Depends(get_current_token),
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Updates classification tags for an existing saved outfit."""
+    client = get_user_scoped_supabase_client(token)
+    now_iso = datetime.now(timezone.utc).isoformat()
+    tags = validate_and_normalize_tags(body.tags, allow_default=False)
+
+    try:
+        res = (
+            client.from_("outfits")
+            .update({"tags": tags, "updated_at": now_iso})
+            .eq("id", outfit_id)
+            .eq("user_id", user.id)
+            .eq("is_saved", True)
+            .execute()
+        )
+    except Exception as exc:
+        logger.error(f"Failed to update tags for outfit {outfit_id}: {exc}")
+        raise AppException(message="Unable to update outfit tags.", code="TAG_UPDATE_ERROR", status_code=500)
+
+    if not res.data:
+        raise AppException(
+            message="Saved outfit not found or unauthorized.",
+            code="NOT_FOUND",
+            status_code=404,
+        )
+
+    return {"success": True, "tags": tags}
 
 
 @router.delete(
@@ -799,14 +1204,14 @@ async def unsave_outfit(
     token: str = Depends(get_current_token),
     user: AuthenticatedUser = Depends(get_current_user),
 ):
-    """Removes an outfit from saved/bookmarked status."""
+    """Removes an outfit from saved/bookmarked status and clears its tags."""
     client = get_user_scoped_supabase_client(token)
     now_iso = datetime.now(timezone.utc).isoformat()
 
     try:
         res = (
             client.from_("outfits")
-            .update({"is_saved": False, "updated_at": now_iso})
+            .update({"is_saved": False, "tags": [], "updated_at": now_iso})
             .eq("id", outfit_id)
             .eq("user_id", user.id)
             .execute()
@@ -928,33 +1333,43 @@ async def record_outfit_event(
 
     outfit_row = outfit_res.data[0]
 
-    # 2. Extract item attributes for transparent Style DNA derivation
-    colors: set[str] = set()
-    categories: set[str] = set()
-    styles: set[str] = set()
+    # Idempotency check for direct 'save' events to avoid duplicate Style DNA records
+    if body.event_type == "save":
+        try:
+            existing_event = (
+                client.from_("outfit_events")
+                .select("id, user_id, outfit_id, event_type, metadata, created_at")
+                .eq("user_id", user.id)
+                .eq("outfit_id", outfit_id)
+                .eq("event_type", "save")
+                .limit(1)
+                .execute()
+            )
+            if existing_event.data:
+                ev = existing_event.data[0]
+                now_iso = datetime.now(timezone.utc).isoformat()
+                try:
+                    client.from_("outfits").update({"is_saved": True, "updated_at": now_iso}).eq("id", outfit_id).execute()
+                except Exception:
+                    pass
+                return OutfitEventResponse(
+                    id=ev["id"],
+                    user_id=ev["user_id"],
+                    outfit_id=ev["outfit_id"],
+                    event_type=ev["event_type"],
+                    metadata=ev.get("metadata") or {},
+                    created_at=ev.get("created_at") or now_iso,
+                )
+        except Exception as exc:
+            logger.debug(f"Could not check existing save event: {exc}")
 
-    try:
-        items_res = (
-            client.from_("outfit_items")
-            .select("slot, wardrobe_items(category, slot, sub_category, primary_color, color_tags, style_tags)")
-            .eq("outfit_id", outfit_id)
-            .execute()
-        )
-        for row in (items_res.data or []):
-            slot = row.get("slot")
-            if slot:
-                categories.add(str(slot).lower())
-            w_item = row.get("wardrobe_items") or {}
-            if w_item.get("category"):
-                categories.add(str(w_item["category"]).lower())
-            if w_item.get("primary_color"):
-                colors.add(str(w_item["primary_color"]).lower())
-            for c in (w_item.get("color_tags") or []):
-                colors.add(str(c).lower())
-            for s in (w_item.get("style_tags") or []):
-                styles.add(str(s).lower())
-    except Exception as exc:
-        logger.debug(f"Could not load items for event metadata: {exc}")
+    # 2. Extract item attributes for transparent Style DNA derivation (wardrobe + catalog)
+    event_metadata = _extract_outfit_event_metadata(
+        client=client,
+        outfit_id=outfit_id,
+        outfit_row=outfit_row,
+        extra_metadata=body.metadata,
+    )
 
     event_id = str(uuid4())
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -963,13 +1378,7 @@ async def record_outfit_event(
         "user_id": user.id,
         "outfit_id": outfit_id,
         "event_type": body.event_type,
-        "metadata": {
-            "colors": sorted(list(colors)),
-            "categories": sorted(list(categories)),
-            "styles": sorted(list(styles)),
-            "occasion": outfit_row.get("occasion"),
-            **(body.metadata or {}),
-        },
+        "metadata": event_metadata,
         "created_at": now_iso,
     }
 
@@ -991,7 +1400,7 @@ async def record_outfit_event(
             pass
     elif body.event_type == "dislike":
         try:
-            client.from_("outfits").update({"is_saved": False, "updated_at": now_iso}).eq("id", outfit_id).execute()
+            client.from_("outfits").update({"is_saved": False, "tags": [], "updated_at": now_iso}).eq("id", outfit_id).execute()
         except Exception:
             pass
 

@@ -151,6 +151,92 @@ def no_formal_shoes_for_lounge(candidate: Any, occasion: Any) -> bool:
     return True
 
 
+def item_occasion_match(item: Any, occasion: Any) -> bool:
+    """Check whether an item is valid for a target occasion.
+
+    Items without occasion tags are treated as versatile.
+    If occasion tags are present, the target occasion must match or fall into
+    a compatible occasion cluster.
+    """
+    if not occasion:
+        return True
+    target = _normalize(occasion)
+    if target in ("all", "any", "all_occasion"):
+        return True
+
+    occasions = _coerce_item(item, "occasions", None)
+    if occasions is None:
+        occ = _coerce_item(item, "occasion", None)
+        if occ is not None:
+            occasions = [occ]
+
+    if not occasions:
+        return True
+
+    if isinstance(occasions, str):
+        normalized_options = {_normalize(occasions)}
+    elif isinstance(occasions, (list, tuple, set)):
+        normalized_options = {_normalize(o) for o in occasions if o}
+    else:
+        normalized_options = {_normalize(occasions)}
+
+    if not normalized_options or "all" in normalized_options or "all_season" in normalized_options:
+        return True
+
+    if target in normalized_options:
+        return True
+
+    clusters = {
+        "casual": {"casual", "college", "lounge", "daily"},
+        "college": {"college", "casual"},
+        "lounge": {"lounge", "casual"},
+        "work": {"work", "formal", "office", "classic"},
+        "formal": {"formal", "work", "wedding", "festive"},
+        "festive": {"festive", "wedding", "traditional", "party", "formal"},
+        "wedding": {"wedding", "festive", "traditional", "formal"},
+        "party": {"party", "date", "date_night", "festive", "casual"},
+        "date": {"date", "date_night", "party", "casual", "work"},
+    }
+    allowed = clusters.get(target, {target})
+    if bool(normalized_options & allowed):
+        return True
+
+    # Allow shoes/layers with matching formality or style
+    style = _normalize(_coerce_item(item, "style", ""))
+    formality = int(_coerce_item(item, "formality", 1) or 1)
+    if target in {"wedding", "festive", "formal"} and (style in {"formal", "festive", "traditional"} or formality >= 2):
+        return True
+
+    return False
+
+
+def no_sneakers_with_ethnic_formal(candidate: Any, occasion: Any) -> bool:
+    """Reject casual sneakers with traditional ethnic formal looks (anarkali/saree/ethnic_set)."""
+    target = _normalize(occasion)
+    # Wedding / festive strictly rejects athletic/streetwear sneakers with formal ethnic sets
+    if target in {"wedding", "festive", "formal"}:
+        has_formal_ethnic = False
+        has_sneakers = False
+        for _, item in _iter_slots(candidate):
+            cat = _normalize(_coerce_item(item, "category", ""))
+            subcat = _normalize(_coerce_item(item, "sub_category", "") or _coerce_item(item, "subtype", ""))
+            if cat in {"saree", "ethnic_set"} or subcat in {"anarkali", "saree", "anarkali_set", "sharara_set"}:
+                has_formal_ethnic = True
+            if cat == "shoes" and ("sneaker" in subcat or "sneakers" in subcat):
+                has_sneakers = True
+        if has_formal_ethnic and has_sneakers:
+            return False
+
+    # Conversely, for pure casual, reject exclusive wedding/bridal items
+    if target in {"casual", "college", "lounge"}:
+        for _, item in _iter_slots(candidate):
+            subcat = _normalize(_coerce_item(item, "sub_category", "") or _coerce_item(item, "subtype", ""))
+            if subcat in {"anarkali", "anarkali_set", "sharara_set", "silk_saree", "kanjivaram_saree"}:
+                return False
+
+    return True
+
+
 def hard_filter_candidate(
     candidate: Any,
     occasion: Any,
@@ -166,6 +252,8 @@ def hard_filter_candidate(
             return False
         if not season_match(item, season):
             return False
+        if not item_occasion_match(item, occasion):
+            return False
 
     if duplicate_items(candidate):
         return False
@@ -173,4 +261,7 @@ def hard_filter_candidate(
         return False
     if not no_formal_shoes_for_lounge(candidate, occasion):
         return False
+    if not no_sneakers_with_ethnic_formal(candidate, occasion):
+        return False
     return True
+

@@ -30,7 +30,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version=settings.VERSION,
-    description="FastAPI backend foundation for FlashFit fashion e-commerce application",
+    description="FastAPI backend foundation for StyleSense fashion e-commerce application",
     lifespan=lifespan,
     docs_url="/docs",
     redoc_url="/redoc",

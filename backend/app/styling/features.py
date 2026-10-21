@@ -34,15 +34,17 @@ def _extract_items(candidate: Any) -> list[Any]:
 
 
 def _extract_colors(items: list[Any]) -> list[Any]:
-    """Collect colour values and pattern colours for palette scoring."""
+    """Collect colour values for palette scoring."""
     colors: list[Any] = []
     for item in items:
         color = _coerce_item(item, "color", None)
         if color is not None:
             colors.append(color)
-        pattern = _coerce_item(item, "pattern", None)
-        if pattern is not None:
-            colors.append(pattern)
+        color_tags = _coerce_item(item, "colors", None) or _coerce_item(item, "color_tags", None)
+        if isinstance(color_tags, (list, tuple)):
+            for ct in color_tags:
+                if ct and ct not in colors:
+                    colors.append(ct)
     return colors
 
 
@@ -78,25 +80,82 @@ def color_feature_score(candidate: Any) -> float:
     return palette_harmony(_extract_colors(items))
 
 
+STYLE_ARCHETYPES: dict[str, set[str]] = {
+    "casual": {"casual", "streetwear", "minimal", "relaxed", "comfort", "daily"},
+    "classic": {"classic", "minimal", "quiet_luxury", "tailored", "workwear", "smart_casual"},
+    "ethnic": {"traditional", "festive", "ethnic", "artisanal", "regal", "contemporary"},
+    "formal": {"formal", "power_dressing", "elegant", "classic", "minimal"},
+    "party": {"party", "glam", "elegant", "90s_chic", "playful"},
+    "boho": {"boho", "bohemian", "artisanal", "relaxed", "feminine"},
+}
+
+
 def style_feature_score(candidate: Any) -> float:
-    """Reward stylistic diversity within an outfit."""
+    """Score aesthetic coherence and harmony across outfit pieces.
+
+    Rewards outfits whose pieces belong to harmonious style archetypes or share
+    tags, penalising disjointed or clashing combinations.
+    """
     items = _extract_items(candidate)
     if not items:
         return 0.5
-    styles: list[str] = []
+    item_styles: list[set[str]] = []
     for item in items:
-        style = _coerce_item(item, "style", None)
-        if style is not None:
-            styles.append(str(style).lower())
-    if not styles:
-        return 0.5
-    unique = set(styles)
-    return round(len(unique) / max(1, len(styles)), 3)
+        s_tags: set[str] = set()
+        for key in ("style", "styles", "style_tags"):
+            val = _coerce_item(item, key, None)
+            if isinstance(val, (list, tuple, set)):
+                s_tags.update(str(v).strip().lower() for v in val if v)
+            elif isinstance(val, str) and val.strip():
+                s_tags.add(val.strip().lower())
+        if s_tags:
+            item_styles.append(s_tags)
+
+    if len(item_styles) <= 1:
+        return 0.85
+
+    # Check for direct shared tag across all or pairwise
+    common = set.intersection(*item_styles)
+    if common:
+        return 1.0
+
+    # Check archetype overlap
+    archetype_matches = 0
+    total_pairs = 0
+    has_traditional = any("traditional" in s or "ethnic" in s or "regal" in s for s in item_styles)
+    has_streetwear = any("streetwear" in s or "sporty" in s for s in item_styles)
+
+    for i in range(len(item_styles)):
+        for j in range(i + 1, len(item_styles)):
+            total_pairs += 1
+            pair_a = item_styles[i]
+            pair_b = item_styles[j]
+            # If they share any tag
+            if pair_a & pair_b:
+                archetype_matches += 1
+            else:
+                # Check if both match any archetype
+                matched_arch = any(
+                    bool(pair_a & arch_tags) and bool(pair_b & arch_tags)
+                    for arch_tags in STYLE_ARCHETYPES.values()
+                )
+                if matched_arch:
+                    archetype_matches += 1
+
+    base_coherence = (archetype_matches / max(1, total_pairs))
+    score = 0.5 + (0.5 * base_coherence)
+
+    # Moderate clash penalty for combining pure traditional with sporty/streetwear
+    if has_traditional and has_streetwear:
+        score = max(0.35, score - 0.25)
+
+    return round(score, 3)
 
 
 def occasion_feature_score(candidate: Any, occasion: Any) -> float:
-    """Score how well item formality levels match the target occasion."""
-    target = occasion_to_formality_band(occasion)
+    """Score how well item formality and occasion affinities match the target occasion."""
+    target_band = occasion_to_formality_band(occasion)
+    target_name = str(occasion).strip().lower()
     if isinstance(candidate, dict):
         slots = _coerce_item(candidate, "slots", {})
     else:
@@ -104,8 +163,27 @@ def occasion_feature_score(candidate: Any, occasion: Any) -> float:
     scores: list[float] = []
     for item in slots.values():
         formality = int(_coerce_item(item, "formality", 1) or 1)
-        scores.append(1.0 if formality <= target else 0.3)
+        formality_score = 1.0 if formality <= target_band else 0.3
+
+        item_occs = _coerce_item(item, "occasions", None)
+        if item_occs is None:
+            occ = _coerce_item(item, "occasion", None)
+            item_occs = [occ] if occ else []
+        elif isinstance(item_occs, str):
+            item_occs = [item_occs]
+
+        if item_occs:
+            norm_occs = {str(o).strip().lower() for o in item_occs if o}
+            if target_name in norm_occs or "all" in norm_occs or "all_season" in norm_occs:
+                occ_score = 1.0
+            else:
+                occ_score = 0.4
+        else:
+            occ_score = 0.8
+
+        scores.append(round(0.4 * formality_score + 0.6 * occ_score, 3))
     return round(sum(scores) / max(1, len(scores)), 3) if scores else 0.5
+
 
 
 def season_feature_score(candidate: Any, season: Any) -> float:

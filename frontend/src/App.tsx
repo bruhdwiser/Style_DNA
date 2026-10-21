@@ -3,7 +3,6 @@ import { Routes, Route } from 'react-router-dom'
 import HomePage from '@/pages/HomePage'
 import ShopPage from '@/pages/ShopPage'
 import ShopProductDetailPage from '@/pages/ShopProductDetailPage'
-import ProductDetailPage from '@/pages/ProductDetailPage'
 import CartPage from '@/pages/CartPage'
 import LoginPage from '@/pages/LoginPage'
 import AuthCallbackPage from '@/pages/AuthCallbackPage'
@@ -24,7 +23,7 @@ export function App() {
       <Route path="/" element={<HomePage />} />
       <Route path="/shop" element={<ShopPage />} />
       <Route path="/shop/:id" element={<ShopProductDetailPage />} />
-      <Route path="/product/:id" element={<ProductDetailPage />} />
+      <Route path="/product/:id" element={<ShopProductDetailPage />} />
       <Route path="/cart" element={<CartPage />} />
       <Route path="/login" element={<LoginPage />} />
       <Route path="/auth/callback" element={<AuthCallbackPage />} />

@@ -1,0 +1,4 @@
+-- Intentionally no DELETE policy is added here.
+-- Product deletion is handled by the backend's admin-authorized service-role
+-- endpoint, which bypasses RLS after require_admin succeeds. Granting clients
+-- a direct delete policy would bypass that application-level authorization.

@@ -1,19 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import {
-  Shield,
-  User,
-  Sparkles,
-  Download,
-  Trash2,
-  CheckCircle,
-  AlertTriangle,
-  Lock,
-  Eye,
-  RefreshCw,
-  Palette,
-  ExternalLink,
-} from 'lucide-react'
 import { Navigation } from '@/components/navigation'
 import { Footer } from '@/components/footer'
 import { Button } from '@/components/ui/button'
@@ -120,7 +106,7 @@ export default function SettingsPage() {
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `flashfit_data_export_${new Date().toISOString().slice(0, 10)}.json`
+      a.download = `stylesense_data_export_${new Date().toISOString().slice(0, 10)}.json`
       a.click()
       URL.revokeObjectURL(url)
       setActionSuccess('Personal data archive downloaded.')
@@ -137,7 +123,7 @@ export default function SettingsPage() {
     setIsDeletingAccount(true)
     try {
       await api.account.deleteAccount()
-      alert('Your FlashFit account, private wardrobe images, and style records have been permanently purged.')
+      alert('Your StyleSense account, private wardrobe images, and style records have been permanently purged.')
       await signOut()
       navigate('/', { replace: true })
     } catch (err: any) {
@@ -166,26 +152,23 @@ export default function SettingsPage() {
         {/* Header */}
         <header className="settings-header">
           <div className="settings-badge">
-            <Shield className="w-4 h-4 text-primary" />
-            <span>Privacy & Profile</span>
+            <span>YOUR DATA</span>
           </div>
-          <h1 className="settings-title">Account & Privacy Settings</h1>
+          <h1 className="settings-title">Account & privacy.</h1>
           <p className="settings-subtitle">
-            Manage your style preferences, optional AI features, data portability, and consent records.
+            Your profile, closet permissions, data export, and account controls.
           </p>
         </header>
 
         {/* Banners */}
         {error && (
           <div className="settings-alert-error">
-            <AlertTriangle className="w-5 h-5 flex-shrink-0" />
             <span>{error}</span>
           </div>
         )}
 
         {actionSuccess && (
           <div className="settings-alert-success">
-            <CheckCircle className="w-5 h-5 flex-shrink-0" />
             <span>{actionSuccess}</span>
           </div>
         )}
@@ -196,12 +179,10 @@ export default function SettingsPage() {
           <section className="settings-card">
             <div className="settings-card-header">
               <div className="flex items-center gap-2">
-                <Palette className="w-5 h-5 text-primary" />
                 <h2 className="text-xl font-semibold text-foreground">Style Preferences</h2>
               </div>
               <Link to="/style-onboarding?edit=true">
                 <Button size="sm" variant="outline" className="gap-1.5 text-xs">
-                  <Sparkles className="w-3.5 h-3.5 text-accent" />
                   Edit Preferences
                 </Button>
               </Link>
@@ -286,7 +267,6 @@ export default function SettingsPage() {
                 <div className="body-guidance-box">
                   <div className="flex items-center justify-between mb-2">
                     <span className="text-xs font-semibold text-accent-foreground uppercase tracking-wider flex items-center gap-1.5">
-                      <Sparkles className="w-3.5 h-3.5" />
                       Derived Body Guidance (Optional)
                     </span>
                     <Button
@@ -297,13 +277,11 @@ export default function SettingsPage() {
                       className="text-xs text-destructive hover:bg-destructive/10 h-7 px-2"
                       title="Permanently delete derived body guidance"
                     >
-                      <Trash2 className="w-3 h-3 mr-1" />
                       {isDeletingGuidance ? 'Deleting…' : 'Delete Guidance'}
                     </Button>
                   </div>
                   <p className="text-xs text-muted-foreground leading-relaxed">
-                    Guidance is derived entirely in memory to balance cuts and silhouettes. FlashFit never stores raw
-                    measurements, calculates BMI, or judges weight. You can delete this at any time.
+                    It helps balance cuts and silhouettes. StyleSense never stores your measurements, calculates BMI, or judges weight. You can delete it at any time.
                   </p>
                 </div>
               )}
@@ -314,26 +292,25 @@ export default function SettingsPage() {
           <section className="settings-card">
             <div className="settings-card-header">
               <div className="flex items-center gap-2">
-                <Shield className="w-5 h-5 text-emerald-500" />
-                <h2 className="text-xl font-semibold text-foreground">AI & Privacy Consents</h2>
+                <h2 className="text-xl font-semibold text-foreground">Permissions & privacy</h2>
               </div>
-              <span className="text-xs text-emerald-600 bg-emerald-500/10 px-2 py-0.5 rounded-full font-medium">
-                Enforced by RLS
+              <span className="text-xs text-primary bg-secondary px-2 py-0.5 font-medium">
+                PERMISSIONS APPLY IMMEDIATELY
               </span>
             </div>
 
             <div className="settings-card-body space-y-5">
               <p className="text-xs text-muted-foreground leading-relaxed">
-                Control how optional AI features interact with your data. You can grant or revoke these permissions at
+                Choose whether optional external photo suggestions can use your data. You can grant or revoke these permissions at
                 any time with immediate effect.
               </p>
 
               {/* Consent 1: Body Guidance Storage */}
               <div className="consent-item">
                 <div className="consent-info">
-                  <h4 className="consent-title">Derived Body Guidance Storage</h4>
+                  <h4 className="consent-title">Save silhouette guidance</h4>
                   <p className="consent-desc">
-                    Allows FlashFit to retain neutral body silhouette guidance derived in memory to personalize cut suggestions.
+                    Allows StyleSense to keep neutral silhouette guidance for better-matched cut suggestions.
                   </p>
                 </div>
                 <div className="consent-toggle">
@@ -345,11 +322,11 @@ export default function SettingsPage() {
                     }
                     className={`text-xs h-8 ${
                       isConsentGranted('body_guidance_storage')
-                        ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                        ? 'bg-primary hover:bg-primary/90 text-primary-foreground'
                         : 'text-muted-foreground'
                     }`}
                   >
-                    {isConsentGranted('body_guidance_storage') ? 'Granted ✓' : 'Revoked'}
+                    {isConsentGranted('body_guidance_storage') ? 'Allowed' : 'Not allowed'}
                   </Button>
                 </div>
               </div>
@@ -357,9 +334,9 @@ export default function SettingsPage() {
               {/* Consent 2: Wardrobe Photo Analysis */}
               <div className="consent-item">
                 <div className="consent-info">
-                  <h4 className="consent-title">AI Wardrobe Photo Analysis</h4>
+                  <h4 className="consent-title">External photo tag suggestions</h4>
                   <p className="consent-desc">
-                    Allows OpenRouter AI to analyze uploaded clothing photos for tag suggestions. Only sanitized photos are
+                    Allows an external service to read a sanitized clothing photo and suggest tags. Only sanitized photos are
                     sent; no personal profile data or measurements are ever transmitted.
                   </p>
                 </div>
@@ -372,26 +349,25 @@ export default function SettingsPage() {
                     }
                     className={`text-xs h-8 ${
                       isConsentGranted('wardrobe_photo_analysis')
-                        ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                        ? 'bg-primary hover:bg-primary/90 text-primary-foreground'
                         : 'text-muted-foreground'
                     }`}
                   >
-                    {isConsentGranted('wardrobe_photo_analysis') ? 'Granted ✓' : 'Revoked'}
+                    {isConsentGranted('wardrobe_photo_analysis') ? 'Allowed' : 'Not allowed'}
                   </Button>
                 </div>
               </div>
 
               {/* Privacy Notice Box */}
               <div className="privacy-guarantee-box">
-                <Lock className="w-4 h-4 text-primary flex-shrink-0 mt-0.5" />
                 <div className="text-xs text-muted-foreground space-y-1">
                   <p>
-                    <strong>Our Ethical AI Guarantee:</strong>
+                    <strong>Privacy facts:</strong>
                   </p>
                   <ul className="list-disc list-inside space-y-0.5">
-                    <li>No body measurements or weight estimates are ever stored or sent to AI.</li>
-                    <li>Wardrobe images are strictly stored in private, user-scoped storage buckets.</li>
-                    <li>Deterministic rules dominate; outfit validity is guaranteed without AI.</li>
+                    <li>Body measurements and weight estimates are never stored or sent to external services.</li>
+                    <li>Closet photos stay private to your account.</li>
+                    <li>Looks are built from your clothes and preferences without sending them to an external service.</li>
                   </ul>
                 </div>
               </div>
@@ -402,15 +378,13 @@ export default function SettingsPage() {
           <section className="settings-card">
             <div className="settings-card-header">
               <div className="flex items-center gap-2">
-                <Download className="w-5 h-5 text-primary" />
                 <h2 className="text-xl font-semibold text-foreground">Data Portability</h2>
               </div>
             </div>
 
             <div className="settings-card-body space-y-4">
               <p className="text-sm text-muted-foreground">
-                In compliance with GDPR and data portability standards, you can download a full copy of all your
-                personal wardrobe items, styling preferences, saved outfits, events, and consents in JSON format.
+                Download a full copy of your rack, style preferences, saved looks, feedback, and permissions as a JSON file.
               </p>
 
               <div className="pt-2">
@@ -419,7 +393,6 @@ export default function SettingsPage() {
                   disabled={isExporting}
                   className="gap-2 bg-primary hover:bg-primary/90 text-primary-foreground shadow-sm"
                 >
-                  <Download className="w-4 h-4" />
                   {isExporting ? 'Exporting Archive…' : 'Export My Data (JSON)'}
                 </Button>
               </div>
@@ -430,15 +403,14 @@ export default function SettingsPage() {
           <section className="settings-card border-destructive/30">
             <div className="settings-card-header">
               <div className="flex items-center gap-2 text-destructive">
-                <Trash2 className="w-5 h-5" />
-                <h2 className="text-xl font-semibold">Danger Zone</h2>
+                <h2 className="text-xl font-semibold">Your account</h2>
               </div>
             </div>
 
             <div className="settings-card-body space-y-4">
               <p className="text-sm text-muted-foreground">
                 Permanently delete your account. This action immediately purges all your private wardrobe photos,
-                style profile, saved outfits, feedback events, and database records. This cannot be undone.
+                style profile, saved looks, and feedback history. This cannot be undone.
               </p>
 
               <div className="pt-2">
@@ -447,8 +419,7 @@ export default function SettingsPage() {
                   onClick={() => setIsDeleteAccountOpen(true)}
                   className="gap-2 shadow-sm"
                 >
-                  <Trash2 className="w-4 h-4" />
-                  Delete Account & Purge Closet
+                  DELETE ACCOUNT & CLOSET
                 </Button>
               </div>
             </div>
@@ -463,11 +434,10 @@ export default function SettingsPage() {
         <div className="modal-backdrop">
           <div className="modal-card modal-confirm">
             <h3 className="modal-title text-destructive flex items-center gap-2">
-              <Trash2 className="w-5 h-5" />
               Permanently Delete Account?
             </h3>
             <p className="text-sm text-muted-foreground mt-2 leading-relaxed">
-              This will permanently delete your FlashFit account (<strong>{user?.email}</strong>), along with all your
+              This will permanently delete your StyleSense account (<strong>{user?.email}</strong>), along with all your
               wardrobe photos, style profiles, outfits, and affinities. This action is irreversible.
             </p>
             <div className="modal-actions mt-6">

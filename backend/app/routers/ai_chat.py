@@ -11,9 +11,9 @@ logger = logging.getLogger("flashfit.ai")
 router = APIRouter(prefix="/ai-chat", tags=["AI Styling"])
 
 FALLBACK_MODELS = [
-    "meta-llama/llama-3.2-3b-instruct:free",
-    "microsoft/phi-3-mini-128k-instruct:free",
-    "mistralai/mistral-7b-instruct:free",
+    "liquid/lfm-2.5-2.6b:free",
+    "apodex/apodex-1.1-mini:free",
+    "google/gemma-4-26b-a4b-it:free",
 ]
 
 # Regex pattern for markdown links: [Link Text](URL)
@@ -53,14 +53,16 @@ def extract_and_sanitize_links(
         # Case 1: Target ID directly matches an authentic catalog UUID
         if target_id in catalog_by_id:
             prod = catalog_by_id[target_id]
+            prod_name = prod.get("name") or "View Piece"
             recommended_map[target_id] = RecommendedProduct(
                 id=target_id,
-                name=prod.get("name") or link_text,
+                name=prod_name,
                 price=round(int(prod.get("price_cents") or 0) / 100, 2),
                 image_url=prod.get("image_url"),
                 category=prod.get("category"),
             )
-            return f"[{link_text}](/product/{target_id})"
+            display_label = prod_name if link_text == target_id else link_text
+            return f"[{display_label}](/product/{target_id})"
 
         # Case 2: Target ID was hallucinated (e.g. /product/123), but link text matches a real product
         matched_by_name = catalog_by_name.get(link_text.lower())
@@ -82,7 +84,64 @@ def extract_and_sanitize_links(
         return link_text
 
     sanitized_text = MARKDOWN_LINK_PATTERN.sub(replace_link, raw_text)
+
+    # Pass 2: Auto-link any catalog items mentioned in bold (e.g. **Product Name**)
+    # that weren't formatted as markdown links by the LLM
+    for name_lower, prod in sorted(catalog_by_name.items(), key=lambda x: len(x[0]), reverse=True):
+        if len(name_lower) < 4:
+            continue
+        p_id = str(prod.get("id"))
+        p_name = prod.get("name")
+        if not p_id or not p_name or f"/product/{p_id}" in sanitized_text:
+            continue
+
+        bold_pattern = re.compile(rf"\*\*{re.escape(p_name)}\*\*", re.IGNORECASE)
+        if bold_pattern.search(sanitized_text):
+            sanitized_text = bold_pattern.sub(f"[{p_name}](/product/{p_id})", sanitized_text, count=1)
+            if p_id not in recommended_map:
+                recommended_map[p_id] = RecommendedProduct(
+                    id=p_id,
+                    name=p_name,
+                    price=round(int(prod.get("price_cents") or 0) / 100, 2),
+                    image_url=prod.get("image_url"),
+                    category=prod.get("category"),
+                )
+
     return sanitized_text, list(recommended_map.values())
+
+
+# Stopwords to filter out conversational noise
+FASHION_STOPWORDS = {
+    "a", "an", "the", "and", "or", "in", "on", "at", "to", "for", "with", "from",
+    "by", "about", "into", "through", "after", "over", "between", "out", "against",
+    "during", "without", "before", "under", "around", "among", "can", "you", "help",
+    "me", "i", "we", "my", "your", "our", "want", "need", "looking", "look", "like",
+    "give", "show", "some", "what", "where", "how", "when", "why", "which", "who",
+    "is", "are", "was", "were", "be", "been", "being", "have", "has", "had", "do",
+    "does", "did", "please", "suggest", "recommend", "wear", "wearing", "style", "styling"
+}
+
+FASHION_CONCEPT_KEYWORDS = {
+    "winter": ["outerwear", "jacket", "coat", "blazer", "hoodie", "sweatshirt", "sweater", "trench", "warm", "fleece", "boots"],
+    "winterwear": ["outerwear", "jacket", "coat", "blazer", "hoodie", "sweatshirt", "sweater", "trench", "warm", "fleece", "boots"],
+    "cold": ["outerwear", "jacket", "coat", "sweater", "hoodie", "boots"],
+    "sneaker": ["footwear", "sneakers", "shoes"],
+    "sneakers": ["footwear", "sneakers", "shoes"],
+    "shoe": ["footwear", "shoes", "boots", "sneakers", "heels", "flats", "juttis"],
+    "shoes": ["footwear", "shoes", "boots", "sneakers", "heels", "flats", "juttis"],
+    "boot": ["footwear", "shoes", "boots"],
+    "boots": ["footwear", "shoes", "boots"],
+    "ethnic": ["ethnic wear", "saree", "kurta", "lehenga", "anarkali", "dupatta", "juttis"],
+    "saree": ["ethnic wear", "saree", "chanderi", "banarasi", "kanjivaram", "silk"],
+    "sari": ["ethnic wear", "saree", "chanderi", "banarasi", "kanjivaram", "silk"],
+    "kurta": ["ethnic wear", "kurta", "ethnic_set"],
+    "formal": ["formal", "blazer", "trousers", "shirt", "suit", "oxford"],
+    "office": ["formal", "blazer", "trousers", "shirt", "workwear"],
+    "work": ["formal", "blazer", "trousers", "shirt", "workwear"],
+    "casual": ["casual", "streetwear", "denim", "t-shirt", "jeans", "joggers", "sneakers"],
+    "party": ["party", "evening", "dress", "satin", "heels", "shimmer"],
+    "summer": ["casual", "linen", "cotton", "dress", "shorts", "crop top"],
+}
 
 
 def generate_deterministic_fallback(
@@ -91,25 +150,84 @@ def generate_deterministic_fallback(
     """Generates a helpful, structured fashion recommendation without requiring an OpenRouter API key.
     
     Guarantees that the app remains functional even when AI keys are absent or upstream APIs fail.
+    Uses semantic concept matching and balanced slot selection instead of arbitrary first-n slicing.
     """
     if not catalog:
         return (
-            "Welcome to FlashFit! Our styling assistant is ready, but our catalog is currently empty. "
+            "Welcome to StyleSense! Our styling assistant is ready, but our catalog is currently empty. "
             "Please check back soon for our latest arrivals!",
             [],
         )
 
-    # Simple keyword-based relevance matching
-    msg_lower = message.lower()
-    matched = [
-        p
-        for p in catalog
-        if (p.get("name") and p["name"].lower() in msg_lower)
-        or (p.get("category") and p["category"].lower() in msg_lower)
-        or (p.get("description") and any(word in p["description"].lower() for word in msg_lower.split() if len(word) > 3))
-    ]
+    # 1. Clean message tokens, ignoring stopwords
+    words = re.findall(r"[a-zA-Z0-9_-]+", message.lower())
+    query_tokens = [w for w in words if w not in FASHION_STOPWORDS and len(w) > 2]
 
-    selected_items = (matched if matched else catalog)[:3]
+    # 2. Expand tokens using fashion concept dictionary
+    target_concepts = set(query_tokens)
+    for token in query_tokens:
+        if token in FASHION_CONCEPT_KEYWORDS:
+            target_concepts.update(FASHION_CONCEPT_KEYWORDS[token])
+
+    # 3. Score catalog products against query concepts
+    scored_items = []
+    for p in catalog:
+        name_lower = (p.get("name") or "").lower()
+        desc_lower = (p.get("description") or "").lower()
+        cat_lower = (p.get("category") or "").lower()
+        slot_lower = (p.get("slot") or "").lower()
+
+        score = 0
+        # Direct token match in name / category / slot gives highest score
+        for qt in query_tokens:
+            if qt in name_lower:
+                score += 5
+            if qt in cat_lower or qt in slot_lower:
+                score += 4
+
+        # Concept matches
+        for c in target_concepts:
+            if c in name_lower:
+                score += 3
+            if c in cat_lower or c in slot_lower:
+                score += 3
+            if c in desc_lower:
+                score += 1
+
+        scored_items.append((score, p))
+
+    # Sort descending by score
+    scored_items.sort(key=lambda x: x[0], reverse=True)
+
+    # 4. Pick balanced, diverse items across different slots/categories
+    selected_items: List[dict] = []
+    seen_slots: set[str] = set()
+
+    # First pass: items with score > 0, ensuring distinct slots where possible
+    for score, item in scored_items:
+        if score > 0:
+            slot = item.get("slot") or item.get("category") or "item"
+            if slot not in seen_slots or len(selected_items) < 2:
+                selected_items.append(item)
+                seen_slots.add(slot)
+            if len(selected_items) >= 3:
+                break
+
+    # If we still have fewer than 3 items, pick diverse pieces across categories
+    if len(selected_items) < 3:
+        for _, item in scored_items:
+            if item not in selected_items:
+                slot = item.get("slot") or item.get("category") or "item"
+                if slot not in seen_slots or len(selected_items) < 2:
+                    selected_items.append(item)
+                    seen_slots.add(slot)
+                if len(selected_items) >= 3:
+                    break
+
+    # Final safety fallback
+    if not selected_items:
+        selected_items = catalog[:3]
+
     recommendations = []
     lines = [
         "Here are curated recommendations from our collection to elevate your style:\n"
@@ -157,8 +275,8 @@ async def chat_with_stylist(payload: ChatRequest) -> ChatResponse:
     try:
         prod_res = (
             supabase.from_("products")
-            .select("id, name, description, price_cents, category, image_url")
-            .limit(50)
+            .select("id, name, description, price_cents, category, slot, image_url")
+            .limit(200)
             .execute()
         )
         catalog_list = prod_res.data or []
@@ -188,7 +306,7 @@ async def chat_with_stylist(payload: ChatRequest) -> ChatResponse:
         catalog_context = "No products currently available in the catalog."
 
     system_prompt = (
-        "You are Flashfits AI, a professional fashion styling assistant for our boutique store.\n\n"
+        "You are StyleSense AI, a professional fashion styling assistant for our boutique store.\n\n"
         "**OUR STORE CATALOG** (You must ONLY recommend items from this catalog):\n"
         f"{catalog_context}\n\n"
         "**CRITICAL RULES:**\n"
@@ -210,6 +328,17 @@ async def chat_with_stylist(payload: ChatRequest) -> ChatResponse:
     # 4. Attempt LLM generation across model chain
     for model in models_to_try:
         try:
+            req_body: dict = {
+                "model": model,
+                "messages": [{"role": "user", "content": system_prompt}],
+                "temperature": 0.7,
+                "max_tokens": 1200,
+            }
+            # For models like nemotron-3.5-lightning, reasoning effort none disables internal
+            # thinking traces so the response content is output immediately
+            if "nemotron" in model.lower():
+                req_body["reasoning"] = {"effort": "none"}
+
             async with httpx.AsyncClient(timeout=25.0) as client:
                 res = await client.post(
                     "https://openrouter.ai/api/v1/chat/completions",
@@ -217,19 +346,15 @@ async def chat_with_stylist(payload: ChatRequest) -> ChatResponse:
                         "Authorization": f"Bearer {settings.OPENROUTER_API_KEY}",
                         "Content-Type": "application/json",
                         "HTTP-Referer": settings.SITE_URL,
-                        "X-Title": "Flashfits Fashion AI",
+                        "X-Title": "StyleSense Fashion AI",
                     },
-                    json={
-                        "model": model,
-                        "messages": [{"role": "user", "content": system_prompt}],
-                        "temperature": 0.7,
-                        "max_tokens": 1200,
-                    },
+                    json=req_body,
                 )
 
                 if res.status_code == 200:
                     data = res.json()
-                    raw_content = data.get("choices", [{}])[0].get("message", {}).get("content")
+                    msg = data.get("choices", [{}])[0].get("message", {})
+                    raw_content = msg.get("content") or msg.get("reasoning") or ""
                     if raw_content:
                         # 5. Sanitize model output and validate product links
                         sanitized_msg, verified_recs = extract_and_sanitize_links(
@@ -240,6 +365,10 @@ async def chat_with_stylist(payload: ChatRequest) -> ChatResponse:
                             recommended_products=verified_recs,
                             model_used=model,
                         )
+                else:
+                    logger.warning(
+                        f"OpenRouter model '{model}' returned HTTP {res.status_code}: {res.text[:150]}"
+                    )
         except Exception as e:
             logger.warning(f"OpenRouter model '{model}' failed: {e}. Trying next fallback...")
             continue

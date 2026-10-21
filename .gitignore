@@ -91,3 +91,6 @@ frontend/.env.local
 
 # Reference source repository
 stylesense_AI/
+
+# Local scratch directory
+scratch/

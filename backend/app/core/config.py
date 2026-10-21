@@ -6,13 +6,13 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=(".env", "../.env.local", ".env.local"),
+        env_file=("../.env.local", ".env.local", ".env"),
         env_file_encoding="utf-8",
         extra="ignore",
     )
 
     # General App Config
-    PROJECT_NAME: str = "FlashFit API"
+    PROJECT_NAME: str = "StyleSense API"
     VERSION: str = "1.0.0"
     API_V1_PREFIX: str = "/api/v1"
     ENVIRONMENT: str = "development"
@@ -48,7 +48,7 @@ class Settings(BaseSettings):
 
     # OpenRouter AI Configuration (Optional server-side provider)
     OPENROUTER_API_KEY: Optional[str] = None
-    OPENROUTER_MODEL: str = "meta-llama/llama-3-8b-instruct:free"
+    OPENROUTER_MODEL: str = "nvidia/nemotron-3.5-lightning:free"
 
     # Site URL
     SITE_URL: str = Field(

@@ -1,37 +1,34 @@
--- Make a user an admin
--- Replace 'user-email@example.com' with the actual user's email
+-- Optional: grant the admin role to an existing Supabase account.
+-- Run only after create-analytics-tables-clean.sql, and replace the email below.
+-- Keep backend/.env ADMIN_EMAILS in sync if you use that allowlist as well.
 
--- First, find the user ID
-SELECT id, email FROM auth.users WHERE email = 'user-email@example.com';
+do $$
+declare
+  target_email text := 'user-email@example.com'; -- replace before running
+  target_user_id uuid;
+begin
+  select id into target_user_id
+  from auth.users
+  where lower(email) = lower(target_email)
+  limit 1;
 
--- Then insert into admin_users table (replace USER_ID_HERE with the actual UUID from above)
-INSERT INTO admin_users (user_id, role, permissions)
-VALUES (
-  'USER_ID_HERE',
-  'admin',
-  '{"analytics": true, "users": true, "products": true}'::jsonb
-)
-ON CONFLICT (user_id) DO UPDATE
-SET role = 'admin',
-    permissions = '{"analytics": true, "users": true, "products": true}'::jsonb,
-    updated_at = NOW();
+  if target_user_id is null then
+    raise exception 'No Supabase Auth user found for %. Sign up first, then rerun this script.', target_email;
+  end if;
 
--- Verify the admin user was created
-SELECT 
-  au.*,
-  u.email
-FROM admin_users au
-JOIN auth.users u ON u.id = au.user_id;
+  insert into public.admin_users (user_id, role, permissions)
+  values (
+    target_user_id,
+    'admin',
+    '{"analytics": true, "users": true, "products": true}'::jsonb
+  )
+  on conflict (user_id) do update
+    set role = excluded.role,
+        permissions = excluded.permissions,
+        updated_at = now();
+end $$;
 
--- Quick way to make current user admin (if you're logged in):
--- Run this in Supabase SQL editor while logged in
-INSERT INTO admin_users (user_id, role, permissions)
-SELECT 
-  auth.uid(),
-  'admin',
-  '{"analytics": true, "users": true, "products": true}'::jsonb
-WHERE auth.uid() IS NOT NULL
-ON CONFLICT (user_id) DO UPDATE
-SET role = 'admin',
-    permissions = '{"analytics": true, "users": true, "products": true}'::jsonb,
-    updated_at = NOW();
+select au.user_id, u.email, au.role, au.permissions, au.created_at
+from public.admin_users au
+join auth.users u on u.id = au.user_id
+where lower(u.email) = lower('user-email@example.com');

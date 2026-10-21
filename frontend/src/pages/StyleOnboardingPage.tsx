@@ -9,15 +9,15 @@ import './StyleOnboardingPage.css'
 // Option data
 // -------------------------------------------------------------------------
 const STYLE_OPTIONS = [
-  { id: 'minimal', label: 'Minimal', emoji: '🤍' },
-  { id: 'classic', label: 'Classic', emoji: '👔' },
-  { id: 'traditional', label: 'Traditional', emoji: '🪷' },
-  { id: 'streetwear', label: 'Streetwear', emoji: '🧢' },
-  { id: 'bohemian', label: 'Bohemian', emoji: '🌿' },
-  { id: 'elegant', label: 'Elegant', emoji: '✨' },
-  { id: 'romantic', label: 'Romantic', emoji: '🌹' },
-  { id: 'casual', label: 'Casual', emoji: '👕' },
-  { id: 'trend', label: 'Trendy', emoji: '🔥' },
+  { id: 'minimal', label: 'Minimal' },
+  { id: 'classic', label: 'Classic' },
+  { id: 'traditional', label: 'Traditional' },
+  { id: 'streetwear', label: 'Streetwear' },
+  { id: 'bohemian', label: 'Bohemian' },
+  { id: 'elegant', label: 'Elegant' },
+  { id: 'romantic', label: 'Romantic' },
+  { id: 'casual', label: 'Casual' },
+  { id: 'trend', label: 'Trendy' },
 ]
 
 const COLOR_OPTIONS = [
@@ -36,15 +36,15 @@ const COLOR_OPTIONS = [
 ]
 
 const OCCASION_OPTIONS = [
-  { id: 'casual', label: 'Casual', emoji: '☕' },
-  { id: 'date', label: 'Date Night', emoji: '🍷' },
-  { id: 'work', label: 'Work', emoji: '💼' },
-  { id: 'college', label: 'College', emoji: '🎓' },
-  { id: 'party', label: 'Party', emoji: '🎉' },
-  { id: 'formal', label: 'Formal', emoji: '🥂' },
-  { id: 'festive', label: 'Festive', emoji: '🪔' },
-  { id: 'wedding', label: 'Wedding', emoji: '💍' },
-  { id: 'lounge', label: 'Lounge', emoji: '🛋️' },
+  { id: 'casual', label: 'Casual' },
+  { id: 'date', label: 'Date Night' },
+  { id: 'work', label: 'Work' },
+  { id: 'college', label: 'College' },
+  { id: 'party', label: 'Party' },
+  { id: 'formal', label: 'Formal' },
+  { id: 'festive', label: 'Festive' },
+  { id: 'wedding', label: 'Wedding' },
+  { id: 'lounge', label: 'Lounge' },
 ]
 
 const BODY_TYPE_OPTIONS = [
@@ -184,7 +184,7 @@ export default function StyleOnboardingPage() {
         {/* Header */}
         <div className="onboarding-header">
           <h1 className="onboarding-title">
-            {isEditing ? '🎨 Edit Style Preferences' : '✨ Style Profile'}
+            {isEditing ? 'Edit your brief' : 'Set the brief'}
           </h1>
           <p className="onboarding-subtitle">
             {isEditing
@@ -201,13 +201,17 @@ export default function StyleOnboardingPage() {
         </div>
 
         {/* Progress */}
-        <div className="onboarding-progress">
+        <div className="onboarding-progress" aria-label={`Step ${currentStep + 1} of ${STEPS.length}`}>
+          <span className="onboarding-progress-count">{String(currentStep + 1).padStart(2, '0')} / 05</span>
           {STEPS.map((s, i) => (
-            <div
+            <button
+              type="button"
               key={s}
               className={`onboarding-progress-dot ${i <= currentStep ? 'active' : ''} ${
                 i < currentStep ? 'completed' : ''
               }`}
+              aria-label={`Go to step ${i + 1}: ${s}`}
+              aria-current={i === currentStep ? 'step' : undefined}
               onClick={() => setCurrentStep(i)}
             />
           ))}
@@ -216,7 +220,7 @@ export default function StyleOnboardingPage() {
         {/* Step Content */}
         <div className="onboarding-step">
           {stepName === 'styles' && (
-            <StepSection title="What's your vibe?" subtitle="Pick styles that speak to you">
+            <StepSection title="What do you reach for?" subtitle="Choose the cuts and references that feel like you">
               <div className="onboarding-chips">
                 {STYLE_OPTIONS.map((opt) => (
                   <button
@@ -224,7 +228,6 @@ export default function StyleOnboardingPage() {
                     className={`onboarding-chip ${selectedStyles.includes(opt.id) ? 'selected' : ''}`}
                     onClick={() => toggleItem(selectedStyles, setSelectedStyles, opt.id)}
                   >
-                    <span className="chip-emoji">{opt.emoji}</span>
                     <span className="chip-label">{opt.label}</span>
                   </button>
                 ))}
@@ -233,7 +236,7 @@ export default function StyleOnboardingPage() {
           )}
 
           {stepName === 'colors' && (
-            <StepSection title="Favourite colours" subtitle="Pick the shades that make you smile">
+            <StepSection title="Colours you return to" subtitle="Choose shades you already like wearing">
               <div className="onboarding-colors">
                 {COLOR_OPTIONS.map((opt) => (
                   <button
@@ -254,7 +257,7 @@ export default function StyleOnboardingPage() {
           )}
 
           {stepName === 'occasions' && (
-            <StepSection title="Dress for…" subtitle="Where do you need outfits?">
+            <StepSection title="Where are you going?" subtitle="Choose the places you get dressed for">
               <div className="onboarding-chips">
                 {OCCASION_OPTIONS.map((opt) => (
                   <button
@@ -262,7 +265,6 @@ export default function StyleOnboardingPage() {
                     className={`onboarding-chip ${selectedOccasions.includes(opt.id) ? 'selected' : ''}`}
                     onClick={() => toggleItem(selectedOccasions, setSelectedOccasions, opt.id)}
                   >
-                    <span className="chip-emoji">{opt.emoji}</span>
                     <span className="chip-label">{opt.label}</span>
                   </button>
                 ))}
@@ -357,7 +359,7 @@ export default function StyleOnboardingPage() {
             onClick={handleNext}
             disabled={saving}
           >
-            {saving ? 'Saving…' : isLast ? 'Finish ✨' : 'Next →'}
+            {saving ? 'Saving…' : isLast ? 'SAVE THE BRIEF →' : 'NEXT →'}
           </button>
         </div>
       </div>

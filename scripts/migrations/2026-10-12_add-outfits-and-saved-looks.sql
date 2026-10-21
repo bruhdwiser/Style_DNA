@@ -1,5 +1,6 @@
 -- ==============================================================================
 -- Forward-Only Migration: Outfits and Outfit Items (Phase 6)
+-- Run seventh, after wardrobe_items exists.
 -- Date: 2026-10-12
 --
 -- Description:
@@ -59,13 +60,15 @@ create index if not exists idx_outfit_items_user
 alter table public.outfits enable row level security;
 alter table public.outfit_items enable row level security;
 
-create policy if not exists "Users manage own outfits"
+drop policy if exists "Users manage own outfits" on public.outfits;
+create policy "Users manage own outfits"
   on public.outfits for all
   to authenticated
   using (auth.uid() = user_id)
   with check (auth.uid() = user_id);
 
-create policy if not exists "Users manage own outfit items"
+drop policy if exists "Users manage own outfit items" on public.outfit_items;
+create policy "Users manage own outfit items"
   on public.outfit_items for all
   to authenticated
   using (auth.uid() = user_id)
@@ -76,3 +79,6 @@ comment on table public.outfits is 'Generated and saved outfit recommendations w
 comment on column public.outfits.score is 'Overall compatibility score from the pure Python rules engine (0.0 to 1.0).';
 comment on column public.outfits.reasons is 'Factual explanation strings connecting actual clothing attributes to occasion constraints.';
 comment on table public.outfit_items is 'Item mappings per outfit slot, referencing wardrobe items or catalog products.';
+
+grant select, insert, update, delete on public.outfits, public.outfit_items to authenticated;
+grant all on public.outfits, public.outfit_items to service_role;

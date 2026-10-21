@@ -1,21 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import {
-  Sparkles,
-  Plus,
-  Trash2,
-  Edit2,
-  CheckCircle,
-  AlertTriangle,
-  Upload,
-  Download,
-  ShieldAlert,
-  X,
-  Filter,
-  Layers,
-  ArrowRight,
-  Eye,
-} from 'lucide-react'
 import { useAuth } from '@/contexts/auth-context'
 import { api } from '@/lib/api'
 import type {
@@ -34,15 +18,15 @@ import './WardrobePage.css'
 // -------------------------------------------------------------------------
 
 const CATEGORIES = [
-  { id: 'top', label: 'Top', emoji: '👚', slot: 'top' },
-  { id: 'bottom', label: 'Bottom', emoji: '👖', slot: 'bottom' },
-  { id: 'dress', label: 'Dress', emoji: '👗', slot: 'dress' },
-  { id: 'saree', label: 'Saree', emoji: '🥻', slot: 'saree' },
-  { id: 'ethnic_set', label: 'Ethnic Set', emoji: '✨', slot: 'ethnic_set' },
-  { id: 'layer', label: 'Outerwear / Layer', emoji: '🧥', slot: 'layer' },
-  { id: 'shoes', label: 'Shoes', emoji: '👟', slot: 'shoes' },
-  { id: 'bag', label: 'Bag', emoji: '👜', slot: 'bag' },
-  { id: 'jewelry', label: 'Jewelry / Accessory', emoji: '💍', slot: 'jewelry' },
+  { id: 'top', label: 'Top', slot: 'top' },
+  { id: 'bottom', label: 'Bottom', slot: 'bottom' },
+  { id: 'dress', label: 'Dress', slot: 'dress' },
+  { id: 'saree', label: 'Saree', slot: 'saree' },
+  { id: 'ethnic_set', label: 'Ethnic Set', slot: 'ethnic_set' },
+  { id: 'layer', label: 'Outerwear / Layer', slot: 'layer' },
+  { id: 'shoes', label: 'Shoes', slot: 'shoes' },
+  { id: 'bag', label: 'Bag', slot: 'bag' },
+  { id: 'jewelry', label: 'Jewelry / Accessory', slot: 'jewelry' },
 ]
 
 const SUBCATEGORIES_BY_CATEGORY: Record<string, string[]> = {
@@ -155,7 +139,7 @@ export default function WardrobePage() {
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `flashfit_wardrobe_export_${new Date().toISOString().slice(0, 10)}.json`
+      a.download = `stylesense_wardrobe_export_${new Date().toISOString().slice(0, 10)}.json`
       a.click()
       URL.revokeObjectURL(url)
     } catch (err: any) {
@@ -181,13 +165,9 @@ export default function WardrobePage() {
     }
   }
 
-  if (authLoading || (loading && items.length === 0)) {
-    return (
-      <div className="wardrobe-loading-screen">
-        <div className="wardrobe-spinner" />
-        <p>Opening your digital closet…</p>
-      </div>
-    )
+  // If definitely not authenticated, redirect will occur via useEffect
+  if (!authLoading && !user) {
+    return null
   }
 
   return (
@@ -198,13 +178,10 @@ export default function WardrobePage() {
       <div className="wardrobe-header">
         <div className="wardrobe-header-content">
           <div>
-            <div className="wardrobe-badge-tag">
-              <Sparkles className="w-3.5 h-3.5 text-accent" />
-              Private Digital Wardrobe
-            </div>
-            <h1 className="wardrobe-title">My Wardrobe</h1>
+            <div className="wardrobe-badge-tag">STYLESENSE / YOUR RACK</div>
+            <h1 className="wardrobe-title">Your rack.</h1>
             <p className="wardrobe-subtitle">
-              Upload clothes, manage styles, and view outfit readiness across all slots.
+              Pieces you own, ready to be worn a few more ways.
             </p>
           </div>
 
@@ -216,8 +193,7 @@ export default function WardrobePage() {
               className="gap-2 text-xs"
               title="Export all wardrobe and profile data as JSON"
             >
-              <Download className="w-4 h-4" />
-              Export Data
+              EXPORT DATA
             </Button>
 
             <Link to="/outfits">
@@ -225,8 +201,7 @@ export default function WardrobePage() {
                 variant="outline"
                 className="gap-2 border-primary/40 text-primary hover:bg-primary/10"
               >
-                <Sparkles className="w-4 h-4 text-accent" />
-                Generate Outfits
+                BUILD LOOKS
               </Button>
             </Link>
 
@@ -234,8 +209,7 @@ export default function WardrobePage() {
               onClick={() => setIsUploadModalOpen(true)}
               className="gap-2 bg-primary hover:bg-primary/90 text-primary-foreground shadow-md"
             >
-              <Plus className="w-4 h-4" />
-              Add Item
+              ADD A PIECE
             </Button>
           </div>
         </div>
@@ -245,37 +219,48 @@ export default function WardrobePage() {
       <div className="wardrobe-container">
         {error && (
           <div className="wardrobe-alert-error">
-            <AlertTriangle className="w-5 h-5 flex-shrink-0" />
             <span>{error}</span>
           </div>
         )}
 
         {/* Slot Coverage Summary Card */}
-        {coverage && (
+        {loading && !coverage ? (
+          <div className="wardrobe-coverage-card skeleton-coverage-card" aria-hidden="true">
+            <div className="coverage-card-header">
+              <div className="skeleton-line skeleton-title" style={{ width: '160px', height: '20px', marginBottom: 0 }} />
+              <div className="skeleton-line" style={{ width: '90px', height: '24px', marginBottom: 0 }} />
+            </div>
+            <div className="coverage-pillars-grid">
+              {['Tops', 'Bottoms', 'One Piece', 'Shoes', 'Layers', 'Extras'].map((pillar) => (
+                <div key={pillar} className="pillar-card skeleton-pillar">
+                  <div className="skeleton-line" style={{ width: '40px', height: '9px', marginBottom: '8px' }} />
+                  <div className="skeleton-line" style={{ width: '60px', height: '14px', marginBottom: '4px' }} />
+                  <div className="skeleton-line" style={{ width: '45px', height: '10px', marginBottom: 0 }} />
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : coverage ? (
           <div className="wardrobe-coverage-card">
             <div className="coverage-card-header">
               <div className="flex items-center gap-2">
-                <Layers className="w-5 h-5 text-primary" />
-                <h2 className="text-lg font-semibold text-foreground">Outfit Slot Coverage</h2>
+                <h2 className="text-lg font-semibold text-foreground">Closet coverage</h2>
               </div>
 
               {coverage.is_ready_for_outfits ? (
                 <div className="flex items-center gap-2">
                   <div className="coverage-ready-badge">
-                    <CheckCircle className="w-4 h-4 text-emerald-500" />
-                    <span>Ready for Outfits</span>
+                  <span>READY TO BUILD</span>
                   </div>
                   <Link to="/outfits">
                     <Button size="sm" className="gap-1.5 bg-primary text-primary-foreground text-xs h-8">
-                      <Sparkles className="w-3.5 h-3.5" />
-                      Create Looks
+                      BUILD LOOKS
                     </Button>
                   </Link>
                 </div>
               ) : (
                 <div className="coverage-incomplete-badge">
-                  <AlertTriangle className="w-4 h-4 text-amber-500" />
-                  <span>Coverage Needed</span>
+                  <span>A FEW GAPS</span>
                 </div>
               )}
             </div>
@@ -283,13 +268,12 @@ export default function WardrobePage() {
             {/* Critical Warnings */}
             {!coverage.is_ready_for_outfits && coverage.critical_missing.length > 0 && (
               <div className="coverage-warning-banner">
-                <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0" />
                 <span>
                   To generate full outfits, your wardrobe needs at least:{' '}
                   <strong>
-                    {coverage.critical_missing.includes('shoes') && '👟 1 pair of shoes '}
-                    {coverage.critical_missing.includes('tops_or_one_piece') && '👚 1 top or dress '}
-                    {coverage.critical_missing.includes('bottoms') && '👖 1 bottom '}
+                    {coverage.critical_missing.includes('shoes') && '1 pair of shoes '}
+                    {coverage.critical_missing.includes('tops_or_one_piece') && '1 top or dress '}
+                    {coverage.critical_missing.includes('bottoms') && '1 bottom '}
                   </strong>
                 </span>
               </div>
@@ -298,7 +282,7 @@ export default function WardrobePage() {
             {/* Slot Pillars Grid */}
             <div className="coverage-pillars-grid">
               <div className={`pillar-card ${coverage.core_coverage.tops > 0 ? 'covered' : 'empty'}`}>
-                <div className="pillar-icon">👚</div>
+                <div className="pillar-icon">TOPS</div>
                 <div className="pillar-info">
                   <span className="pillar-name">Tops</span>
                   <span className="pillar-count">{coverage.core_coverage.tops} items</span>
@@ -306,7 +290,7 @@ export default function WardrobePage() {
               </div>
 
               <div className={`pillar-card ${coverage.core_coverage.bottoms > 0 ? 'covered' : 'empty'}`}>
-                <div className="pillar-icon">👖</div>
+                <div className="pillar-icon">BOTTOMS</div>
                 <div className="pillar-info">
                   <span className="pillar-name">Bottoms</span>
                   <span className="pillar-count">{coverage.core_coverage.bottoms} items</span>
@@ -314,7 +298,7 @@ export default function WardrobePage() {
               </div>
 
               <div className={`pillar-card ${coverage.core_coverage.one_piece > 0 ? 'covered' : 'empty'}`}>
-                <div className="pillar-icon">👗</div>
+                <div className="pillar-icon">ONE PIECE</div>
                 <div className="pillar-info">
                   <span className="pillar-name">Dresses / Sarees</span>
                   <span className="pillar-count">{coverage.core_coverage.one_piece} items</span>
@@ -322,7 +306,7 @@ export default function WardrobePage() {
               </div>
 
               <div className={`pillar-card ${coverage.core_coverage.shoes > 0 ? 'covered' : 'empty'}`}>
-                <div className="pillar-icon">👟</div>
+                <div className="pillar-icon">SHOES</div>
                 <div className="pillar-info">
                   <span className="pillar-name">Shoes</span>
                   <span className="pillar-count">{coverage.core_coverage.shoes} items</span>
@@ -330,7 +314,7 @@ export default function WardrobePage() {
               </div>
 
               <div className={`pillar-card ${coverage.core_coverage.layers > 0 ? 'covered' : 'optional'}`}>
-                <div className="pillar-icon">🧥</div>
+                <div className="pillar-icon">LAYERS</div>
                 <div className="pillar-info">
                   <span className="pillar-name">Layers</span>
                   <span className="pillar-count">{coverage.core_coverage.layers} items</span>
@@ -338,7 +322,7 @@ export default function WardrobePage() {
               </div>
 
               <div className={`pillar-card ${coverage.core_coverage.accessories > 0 ? 'covered' : 'optional'}`}>
-                <div className="pillar-icon">👜</div>
+                <div className="pillar-icon">EXTRAS</div>
                 <div className="pillar-info">
                   <span className="pillar-name">Accessories</span>
                   <span className="pillar-count">{coverage.core_coverage.accessories} items</span>
@@ -346,7 +330,7 @@ export default function WardrobePage() {
               </div>
             </div>
           </div>
-        )}
+        ) : null}
 
         {/* Filter Navigation */}
         <div className="wardrobe-filter-bar">
@@ -363,7 +347,7 @@ export default function WardrobePage() {
                 className={`filter-chip review-chip ${activeFilter === 'needs_review' ? 'active' : ''}`}
                 onClick={() => setActiveFilter('needs_review')}
               >
-                ⚠️ Needs Review ({coverage.needs_review_count})
+                CHECK DETAILS ({coverage.needs_review_count})
               </button>
             )}
 
@@ -419,25 +403,36 @@ export default function WardrobePage() {
         </div>
 
         {/* Wardrobe Items Grid */}
-        {filteredItems.length === 0 ? (
+        {loading && items.length === 0 ? (
+          <div className="wardrobe-grid" aria-label="Loading wardrobe items">
+            {Array.from({ length: 8 }).map((_, idx) => (
+              <div key={`skel-card-${idx}`} className="wardrobe-card skeleton-card">
+                <div className="card-image-wrap skeleton-image-wrap" />
+                <div className="card-content">
+                  <div className="skeleton-line skeleton-title" />
+                  <div className="skeleton-line skeleton-subtitle" />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : filteredItems.length === 0 ? (
           <div className="wardrobe-empty-state">
-            <div className="empty-state-icon">✨</div>
+            <div className="empty-state-icon">YOUR RACK / 00</div>
             <h3 className="empty-state-title">
-              {activeFilter === 'all' ? 'Your closet is empty' : 'No items match this filter'}
+              {activeFilter === 'all' ? 'A little room to start.' : 'Nothing on this rail.'}
             </h3>
             <p className="empty-state-desc">
               {activeFilter === 'all'
-                ? 'Add your favorite tops, bottoms, and shoes to start generating custom personalized outfits.'
-                : 'Try switching filters or add a new piece to your wardrobe.'}
+                ? 'Add a few pieces you reach for. We’ll help you find new combinations.'
+                : 'Try another filter or add a new piece to the rack.'}
             </p>
             <Button onClick={() => setIsUploadModalOpen(true)} className="gap-2">
-              <Plus className="w-4 h-4" />
-              Add Your First Item
+              ADD YOUR FIRST PIECE
             </Button>
           </div>
         ) : (
           <div className="wardrobe-grid">
-            {filteredItems.map((item) => (
+            {filteredItems.map((item, idx) => (
               <div key={item.id} className="wardrobe-card">
                 {/* Image */}
                 <div className="card-image-wrap">
@@ -445,7 +440,16 @@ export default function WardrobePage() {
                     src={item.signed_thumbnail_url || item.signed_image_url || '/placeholder.svg'}
                     alt={item.sub_category || item.category}
                     className="card-image"
-                    loading="lazy"
+                    loading={idx < 4 ? 'eager' : 'lazy'}
+                    fetchPriority={idx < 2 ? 'high' : 'auto'}
+                    onError={(e) => {
+                      const target = e.currentTarget
+                      if (target.src !== item.signed_image_url && item.signed_image_url) {
+                        target.src = item.signed_image_url
+                      } else if (!target.src.includes('placeholder.svg')) {
+                        target.src = '/placeholder.svg'
+                      }
+                    }}
                   />
                   {item.needs_review && (
                     <div className="card-badge-review" title="Tags were auto-derived; click Edit to confirm">
@@ -501,7 +505,6 @@ export default function WardrobePage() {
                       onClick={() => setEditingItem(item)}
                       className="edit-btn gap-1.5 flex-1"
                     >
-                      <Edit2 className="w-3.5 h-3.5" />
                       {item.needs_review ? 'Review Tags' : 'Edit'}
                     </Button>
 
@@ -512,7 +515,7 @@ export default function WardrobePage() {
                       className="delete-btn text-destructive hover:bg-destructive/10"
                       title="Delete item"
                     >
-                      <Trash2 className="w-4 h-4" />
+                      REMOVE
                     </Button>
                   </div>
                 </div>
@@ -524,9 +527,8 @@ export default function WardrobePage() {
         {/* Data Privacy & Account Deletion Footer */}
         <div className="wardrobe-privacy-footer">
           <div className="flex items-center gap-2">
-            <ShieldAlert className="w-4 h-4 text-muted-foreground" />
             <span className="text-xs text-muted-foreground">
-              All images and style tags are private to your account and enforced with Supabase RLS.
+              Your clothes and photos are private to your account.
             </span>
           </div>
 
@@ -569,12 +571,11 @@ export default function WardrobePage() {
         <div className="modal-backdrop">
           <div className="modal-card modal-confirm">
             <h3 className="modal-title text-destructive flex items-center gap-2">
-              <Trash2 className="w-5 h-5" />
               Delete Wardrobe Item?
             </h3>
             <p className="text-sm text-muted-foreground mt-2">
               Are you sure you want to delete this {deleteConfirmItem.sub_category || deleteConfirmItem.category}? Its
-              image and tags will be permanently removed from your private storage.
+              photo and details will be permanently removed from your rack.
             </p>
             <div className="modal-actions mt-6">
               <Button
@@ -601,15 +602,14 @@ export default function WardrobePage() {
         <div className="modal-backdrop">
           <div className="modal-card modal-confirm">
             <h3 className="modal-title text-destructive flex items-center gap-2">
-              <ShieldAlert className="w-5 h-5" />
               Account & Data Purge
             </h3>
             <p className="text-sm text-muted-foreground mt-2">
               This action permanently purges:
             </p>
             <ul className="text-xs text-muted-foreground list-disc list-inside mt-2 space-y-1">
-              <li>All uploaded wardrobe photos and thumbnails in private storage</li>
-              <li>All wardrobe catalog items and tag metadata</li>
+              <li>All uploaded clothing photos</li>
+              <li>Every piece and its details in your rack</li>
               <li>Your style profile and stored body-fit guidance</li>
               <li>All active shopping carts and user consent logs</li>
             </ul>
@@ -701,13 +701,13 @@ function UploadModal({
       if (res.pattern) setPattern(res.pattern)
 
       setAiSuggestedInfo(
-        `AI proposed: ${res.category} • ${res.sub_category || ''} (${res.primary_color}). Please review & adjust below!`
+        `Suggested: ${res.category} • ${res.sub_category || ''} (${res.primary_color}). Check and adjust the details.`
       )
       localStorage.setItem('wardrobe_ai_consent', 'true')
       setConsentConfirmed(true)
       setShowConsentModal(false)
     } catch (err: any) {
-      setError(err?.message || 'AI tag suggestion failed. You can choose tags manually below.')
+      setError(err?.message || 'Tag suggestions failed. You can choose details manually below.')
     } finally {
       setAiSuggesting(false)
     }
@@ -814,7 +814,7 @@ function UploadModal({
             </p>
           </div>
           <button onClick={onClose} className="modal-close-btn" disabled={uploading}>
-            <X className="w-5 h-5" />
+            CLOSE
           </button>
         </div>
 
@@ -840,7 +840,6 @@ function UploadModal({
               </div>
             ) : (
               <label htmlFor="file-input" className="dropzone-label">
-                <Upload className="w-8 h-8 text-primary/70 mb-2" />
                 <span className="font-medium text-foreground">Click or drop garment photo</span>
                 <span className="text-xs text-muted-foreground mt-1">JPEG, PNG, or WebP up to 10 MB</span>
                 <input
@@ -855,12 +854,11 @@ function UploadModal({
             )}
           </div>
 
-          {/* AI Auto-Tag Assist Trigger */}
+          {/* Optional photo tag suggestions */}
           {file && (
             <div className="flex items-center justify-between p-3 bg-primary/10 border border-primary/25 rounded-xl my-3">
               <div className="flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-accent" />
-                <span className="text-xs text-foreground font-medium">Auto-detect tags with AI?</span>
+                <span className="text-xs text-foreground font-medium">Suggest details from this photo?</span>
               </div>
               <Button
                 type="button"
@@ -870,14 +868,13 @@ function UploadModal({
                 disabled={aiSuggesting || uploading}
                 className="text-xs gap-1.5 border-primary/40 text-primary hover:bg-primary/20 h-8"
               >
-                {aiSuggesting ? 'Analyzing Photo…' : '✨ Suggest Tags with AI'}
+                {aiSuggesting ? 'READING THE PHOTO…' : 'SUGGEST DETAILS'}
               </Button>
             </div>
           )}
 
           {aiSuggestedInfo && (
-            <div className="flex items-center gap-2 p-2.5 bg-emerald-500/10 border border-emerald-500/30 rounded-lg text-xs text-emerald-400 my-2">
-              <CheckCircle className="w-4 h-4 flex-shrink-0" />
+            <div className="flex items-center gap-2 p-2.5 bg-secondary/40 border border-border text-xs text-foreground my-2">
               <span>{aiSuggestedInfo}</span>
             </div>
           )}
@@ -898,7 +895,6 @@ function UploadModal({
                     onClick={() => handleCategoryChange(cat.id)}
                     disabled={uploading}
                   >
-                    <span>{cat.emoji}</span>
                     <span>{cat.label}</span>
                   </button>
                 ))}
@@ -993,10 +989,8 @@ function UploadModal({
             </div>
 
             <div className="taxonomy-callout">
-              <Sparkles className="w-4 h-4 text-primary flex-shrink-0" />
               <span>
-                Styling tags (occasions, seasons, formality, archetype) will be derived automatically and
-                placed in <strong>Needs Review</strong> status for your inspection.
+                We’ll suggest details like occasion, season, and fit. Review each one before saving.
               </span>
             </div>
           </div>
@@ -1006,24 +1000,23 @@ function UploadModal({
               Cancel
             </Button>
             <Button type="submit" disabled={uploading || !file}>
-              {uploading ? 'Processing Image…' : 'Add to Closet ✨'}
+            {uploading ? 'ADDING PIECE…' : 'ADD TO YOUR RACK →'}
             </Button>
           </div>
         </form>
 
-        {/* Specific Consent Modal for AI Photo Tagging */}
+        {/* Specific consent for optional external photo analysis */}
         {showConsentModal && (
           <div className="modal-backdrop">
             <div className="modal-card modal-confirm">
               <h3 className="modal-title flex items-center gap-2 text-foreground">
-                <Sparkles className="w-5 h-5 text-accent" />
-                Consent for AI Garment Tagging
+                Consent for photo tag suggestions
               </h3>
               <p className="text-sm text-muted-foreground mt-2 leading-relaxed">
-                FlashFit can inspect your photo to suggest category, color, fit, and pattern.
+                If you opt in, StyleSense sends a sanitized garment photo to OpenRouter to suggest category, colour, fit, and pattern.
               </p>
               <ul className="text-xs text-muted-foreground list-disc list-inside space-y-1 my-3 bg-muted/40 p-3 rounded-lg border border-border">
-                <li>Only the sanitized garment image is sent to OpenRouter.</li>
+                <li>Only the sanitized garment image is sent to the external service.</li>
                 <li><strong>No personal profile data or body measurements are ever sent.</strong></li>
                 <li>All suggested tags are proposed for your confirmation before saving.</li>
               </ul>
@@ -1037,7 +1030,7 @@ function UploadModal({
                   onClick={() => executeAiTagSuggestion(true)}
                   disabled={aiSuggesting}
                 >
-                  {aiSuggesting ? 'Analyzing…' : 'I Consent & Suggest Tags'}
+                  {aiSuggesting ? 'READING PHOTO…' : 'I CONSENT & SUGGEST DETAILS'}
                 </Button>
               </div>
             </div>
@@ -1111,7 +1104,7 @@ function EditItemModal({
             <p className="modal-subtitle">Confirm or adjust auto-derived attributes for accurate outfit matching.</p>
           </div>
           <button onClick={onClose} className="modal-close-btn" disabled={saving}>
-            <X className="w-5 h-5" />
+            CLOSE
           </button>
         </div>
 
@@ -1139,7 +1132,7 @@ function EditItemModal({
               </div>
 
               <div className="form-group">
-                <label className="form-label">Skeleton Slot</label>
+                <label className="form-label">Outfit role</label>
                 <select value={slot} onChange={(e) => setSlot(e.target.value)} className="form-select">
                   <option value="top">Top</option>
                   <option value="bottom">Bottom</option>

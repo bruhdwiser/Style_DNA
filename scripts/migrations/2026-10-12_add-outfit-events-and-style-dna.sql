@@ -1,5 +1,6 @@
 -- ==============================================================================
 -- Migration: Add outfit events and Style DNA tracking
+-- Run eighth, after add-outfits-and-saved-looks.sql.
 -- Date: 2026-10-12
 -- Forward-only, additive migration.
 -- Tracks like, dislike, save, skip, and wear interactions on outfits.
@@ -29,6 +30,7 @@ CREATE INDEX IF NOT EXISTS idx_outfit_events_user_event
 ALTER TABLE public.outfit_events ENABLE ROW LEVEL SECURITY;
 
 -- RLS: Authenticated users can select only their own events
+DROP POLICY IF EXISTS "Users can view own outfit events" ON public.outfit_events;
 CREATE POLICY "Users can view own outfit events"
     ON public.outfit_events
     FOR SELECT
@@ -36,6 +38,7 @@ CREATE POLICY "Users can view own outfit events"
     USING (auth.uid() = user_id);
 
 -- RLS: Authenticated users can record events only under their own user ID
+DROP POLICY IF EXISTS "Users can insert own outfit events" ON public.outfit_events;
 CREATE POLICY "Users can insert own outfit events"
     ON public.outfit_events
     FOR INSERT
@@ -43,8 +46,12 @@ CREATE POLICY "Users can insert own outfit events"
     WITH CHECK (auth.uid() = user_id);
 
 -- RLS: Authenticated users can delete only their own events (e.g., Reset Style DNA)
+DROP POLICY IF EXISTS "Users can delete own outfit events" ON public.outfit_events;
 CREATE POLICY "Users can delete own outfit events"
     ON public.outfit_events
     FOR DELETE
     TO authenticated
     USING (auth.uid() = user_id);
+
+GRANT SELECT, INSERT, DELETE ON public.outfit_events TO authenticated;
+GRANT ALL ON public.outfit_events TO service_role;

@@ -1,5 +1,6 @@
 -- ==============================================================================
 -- Idempotent Catalog Seed: Women-Focused & Unisex Styling Products
+-- Run ninth and last in the Supabase setup sequence.
 -- Date: 2026-10-12
 --
 -- Description:

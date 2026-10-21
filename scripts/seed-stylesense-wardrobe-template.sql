@@ -1,5 +1,6 @@
 -- ============================================================================
 -- StyleSense wardrobe image import template (13 private garment photos)
+-- Optional manual import; not part of the base setup sequence.
 --
 -- IMPORTANT: Do not run until:
 --   1. The wardrobe_items migration has been applied.

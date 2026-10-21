@@ -51,23 +51,96 @@ def _similarity(a: OutfitCandidate, b: OutfitCandidate) -> float:
     return len(left & right) / len(union)
 
 
+def _silhouette(candidate: OutfitCandidate) -> tuple[str, ...]:
+    """Tuple of slot:subtype identifiers representing structural silhouette."""
+    sil = []
+    for slot, item in sorted(candidate.slots.items()):
+        subcat = str(
+            _coerce_item(item, "sub_category")
+            or _coerce_item(item, "subtype")
+            or _coerce_item(item, "category")
+            or ""
+        ).lower()
+        sil.append(f"{slot}:{subcat}")
+    return tuple(sil)
+
+
+def _silhouette_similarity(a: OutfitCandidate, b: OutfitCandidate) -> float:
+    """Measure structural silhouette overlap between two candidates."""
+    sil_a = set(_silhouette(a))
+    sil_b = set(_silhouette(b))
+    if not sil_a or not sil_b:
+        return 0.0
+    return len(sil_a & sil_b) / len(sil_a | sil_b)
+
+
+CORE_REPEAT_PENALTY: float = 0.45
+
+
 def _mmr_diversify(
     ranked: list[tuple[float, OutfitCandidate]],
     *,
     limit: int,
     seed: int | None = 0,
+    is_shuffle: bool = False,
+    exclude_core_signatures: set[frozenset[tuple[str, str]]] | None = None,
 ) -> list[tuple[float, OutfitCandidate]]:
-    """Maximal Marginal Relevance diversification with deterministic seeded RNG.
+    """Maximal Marginal Relevance diversification with deterministic tie-breaking.
 
-    Selects up to *limit* candidates, balancing quality (0.75 weight) against
-    novelty relative to already-selected candidates (0.25 weight).
+    Selects up to *limit* candidates, balancing quality against novelty and
+    silhouette/core diversity relative to already-selected candidates.
     """
     if not ranked:
         return []
-    rng = random.Random(seed)
-    selected: list[tuple[float, OutfitCandidate]] = [ranked[0]]
-    remaining = list(ranked[1:])
-    while len(selected) < min(limit, len(ranked)) and remaining:
+
+    # Decouple stochasticity from random seed: normal requests (is_shuffle=False)
+    # remain strictly deterministic even if a non-zero seed is passed.
+    rng = random.Random(seed if is_shuffle else 0)
+    is_stochastic = is_shuffle
+
+    candidates_pool = list(ranked)
+
+    # In shuffle mode, strictly exclude already seen core signatures without silent fallback
+    if is_shuffle and exclude_core_signatures:
+        candidates_pool = [
+            item for item in candidates_pool
+            if item[1].core_signature not in exclude_core_signatures
+        ]
+
+    if not candidates_pool:
+        return []
+
+    if is_stochastic:
+        jittered = [
+            (round(score + rng.uniform(-0.02, 0.02), 4), cand)
+            for score, cand in candidates_pool
+        ]
+        jittered.sort(
+            key=lambda item: (
+                round(-item[0], 4),
+                tuple(sorted(item[1].core_signature)),
+                item[1].item_ids,
+            )
+        )
+        anchor = rng.choice(jittered[:min(3, len(jittered))])
+        selected = [anchor]
+        remaining = [item for item in jittered if item[1] != anchor[1]]
+    else:
+        # Sort deterministically with stable tiebreakers:
+        # 1. descending score (-item[0])
+        # 2. core signature tuple
+        # 3. full item_ids tuple
+        candidates_pool.sort(
+            key=lambda item: (
+                round(-item[0], 4),
+                tuple(sorted(item[1].core_signature)),
+                item[1].item_ids,
+            )
+        )
+        selected = [candidates_pool[0]]
+        remaining = list(candidates_pool[1:])
+
+    while len(selected) < min(limit, len(candidates_pool)) and remaining:
         best_index = -1
         best_value = float("-inf")
         for index, (score, candidate) in enumerate(remaining):
@@ -79,7 +152,41 @@ def _mmr_diversify(
                 if selected
                 else 0.0
             )
-            mmr_value = (0.75 * score) - (0.25 * max_sim) + (rng.random() * 1e-9)
+            max_sil_sim = (
+                max(
+                    _silhouette_similarity(candidate, chosen_candidate)
+                    for _, chosen_candidate in selected
+                )
+                if selected
+                else 0.0
+            )
+            exact_sil_count = sum(
+                1
+                for _, chosen_candidate in selected
+                if _silhouette(candidate) == _silhouette(chosen_candidate)
+            )
+
+            # Core repetition penalty: prioritize distinct core combinations before repeating cores
+            core_overlap = any(
+                candidate.core_signature == chosen_candidate.core_signature
+                for _, chosen_candidate in selected
+            )
+            core_penalty = CORE_REPEAT_PENALTY if core_overlap else 0.0
+
+            # Combined diversity penalty
+            diversity_penalty = (
+                (0.20 * max_sim)
+                + (0.35 * max_sil_sim)
+                + (0.30 * exact_sil_count)
+                + core_penalty
+            )
+            jitter = (
+                rng.uniform(-0.015, 0.015)
+                if is_stochastic
+                else 0.0
+            )
+
+            mmr_value = (0.65 * score) - diversity_penalty + jitter
             if mmr_value > best_value:
                 best_value = mmr_value
                 best_index = index
@@ -100,6 +207,8 @@ def generate_outfits(
     seed: int | None = 0,
     limit: int = 8,
     max_candidates: int = 5000,
+    is_shuffle: bool = False,
+    exclude_core_signatures: set[frozenset[tuple[str, str]]] | None = None,
 ) -> list[OutfitCandidate]:
     """Generate and rank a diversified set of valid outfit candidates.
 
@@ -135,8 +244,20 @@ def generate_outfits(
 
     if not ranked:
         return []
-    ranked.sort(key=lambda item: (-item[0], str(item[1].item_ids)))
-    diversified = _mmr_diversify(ranked, limit=limit, seed=seed)
+    ranked.sort(
+        key=lambda item: (
+            round(-item[0], 4),
+            tuple(sorted(item[1].core_signature)),
+            item[1].item_ids,
+        )
+    )
+    diversified = _mmr_diversify(
+        ranked,
+        limit=limit,
+        seed=seed,
+        is_shuffle=is_shuffle,
+        exclude_core_signatures=exclude_core_signatures,
+    )
     return [candidate for _, candidate in diversified]
 
 
@@ -171,5 +292,11 @@ def generate_ranked_outfits(
             ),
             candidate,
         ))
-    ranked.sort(key=lambda item: (-item[0], str(item[1].item_ids)))
+    ranked.sort(
+        key=lambda item: (
+            round(-item[0], 4),
+            tuple(sorted(item[1].core_signature)),
+            item[1].item_ids,
+        )
+    )
     return ranked[:limit]

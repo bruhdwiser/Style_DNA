@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Sparkles, CheckCircle2, AlertCircle } from 'lucide-react'
 import { getSupabaseClient } from '@/lib/supabase'
 
 export default function AuthCallbackPage() {
@@ -38,35 +37,23 @@ export default function AuthCallbackPage() {
   }, [navigate])
 
   return (
-    <div className="min-h-screen bg-background flex items-center justify-center p-4">
-      <div className="text-center space-y-4 max-w-sm">
-        <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-primary to-accent flex items-center justify-center text-primary-foreground mx-auto animate-pulse shadow-lg">
-          <Sparkles className="w-7 h-7" />
-        </div>
+    <main className="auth-callback-page">
+      <section className="auth-callback-note">
+        <p className="eyebrow">STYLESENSE / ACCOUNT</p>
 
         {error ? (
-          <div className="space-y-3">
-            <div className="flex items-center justify-center gap-2 text-destructive font-semibold">
-              <AlertCircle className="w-5 h-5" />
-              <span>Authentication Error</span>
-            </div>
-            <p className="text-xs text-muted-foreground">{error}</p>
-            <button
-              onClick={() => navigate('/login')}
-              className="text-xs text-primary font-medium underline"
-            >
-              Return to Login
-            </button>
+          <div>
+            <h1>That didn’t work.</h1>
+            <p>{error}</p>
+            <button onClick={() => navigate('/login')}>BACK TO SIGN IN →</button>
           </div>
         ) : (
-          <div className="space-y-2">
-            <h2 className="text-lg font-bold text-foreground">Completing Sign-In...</h2>
-            <p className="text-xs text-muted-foreground">
-              Verifying credentials and syncing your style profile.
-            </p>
+          <div>
+            <h1>Back in a moment.</h1>
+            <p>Checking your sign-in and opening your rack…</p>
           </div>
         )}
-      </div>
-    </div>
+      </section>
+    </main>
   )
 }

@@ -28,7 +28,7 @@ from ..core.config import settings
 from ..core.exceptions import AppException
 from ..core.image_processing import sanitize_and_process_image
 from ..core.security import get_current_token, get_current_user
-from ..core.supabase import get_user_scoped_supabase_client
+from ..core.supabase import get_admin_supabase_client, get_user_scoped_supabase_client
 from ..schemas.user import AuthenticatedUser
 from ..schemas.wardrobe import (
     FinalizeUploadRequest,
@@ -64,29 +64,100 @@ def _clean_filename(filename: str) -> str:
     return clean[:64] or "image.jpg"
 
 
-def _build_signed_view_url(client: Any, path: Optional[str]) -> Optional[str]:
-    """Generate a temporary signed URL for viewing a private storage object."""
-    if not path:
-        return None
+def _get_storage_signing_client(client: Any = None) -> Any:
+    """Returns the admin Supabase client if available to sign URLs across folders,
+    falling back to the user client."""
     try:
-        res = client.storage.from_(STORAGE_BUCKET).create_signed_url(path, SIGNED_URL_EXPIRY)
+        return get_admin_supabase_client()
+    except Exception:
+        return client
+
+
+def _build_signed_view_url(client: Any, path: Optional[str]) -> Optional[str]:
+    """Generate a temporary signed URL for viewing a private storage object.
+    Never returns a raw relative storage path to prevent client-side 404s.
+    """
+    if not path or not isinstance(path, str):
+        return None
+    if path.startswith("http://") or path.startswith("https://"):
+        return path
+
+    signing_client = _get_storage_signing_client(client)
+    if not signing_client:
+        return None
+
+    try:
+        res = signing_client.storage.from_(STORAGE_BUCKET).create_signed_url(path, SIGNED_URL_EXPIRY)
         if isinstance(res, dict):
             return res.get("signedUrl") or res.get("signed_url")
         if hasattr(res, "signed_url"):
             return getattr(res, "signed_url")
         if hasattr(res, "get"):
-            return res.get("signedURL") or str(res)
+            return res.get("signedURL") or None
     except Exception as exc:
         logger.debug(f"Unable to create signed view URL for {path}: {exc}")
-    return path
+    return None
 
 
-def _format_item_row(row: dict[str, Any], client: Any) -> WardrobeItemResponse:
+def _batch_build_signed_view_urls(paths: list[str], client: Any = None) -> dict[str, str]:
+    """Batch-generates signed download URLs in a single Supabase Storage request.
+    Avoids 2 * N sequential network roundtrips that block the event loop.
+    """
+    clean_paths = [p for p in set(paths) if p and isinstance(p, str) and not p.startswith("http")]
+    signed_map: dict[str, str] = {}
+    if not clean_paths:
+        return signed_map
+
+    signing_client = _get_storage_signing_client(client)
+    if not signing_client:
+        return signed_map
+
+    try:
+        res = signing_client.storage.from_(STORAGE_BUCKET).create_signed_urls(clean_paths, SIGNED_URL_EXPIRY)
+        if isinstance(res, list):
+            for item in res:
+                if isinstance(item, dict):
+                    p = item.get("path")
+                    s_url = item.get("signedUrl") or item.get("signedURL")
+                    if p and s_url:
+                        signed_map[p] = s_url
+    except Exception as exc:
+        logger.warning(f"Batch URL signing failed for {len(clean_paths)} paths: {exc}")
+    return signed_map
+
+
+def _format_item_row(
+    row: dict[str, Any],
+    client: Any = None,
+    signed_map: Optional[dict[str, str]] = None,
+) -> WardrobeItemResponse:
     storage_path = str(row.get("storage_path") or "")
     thumbnail_path = row.get("thumbnail_path")
 
-    signed_image = _build_signed_view_url(client, storage_path)
-    signed_thumb = _build_signed_view_url(client, thumbnail_path) if thumbnail_path else signed_image
+    # Resolve signed image URL
+    if storage_path.startswith("http"):
+        signed_image = storage_path
+    elif signed_map and storage_path in signed_map:
+        signed_image = signed_map[storage_path]
+    elif storage_path:
+        signed_image = _build_signed_view_url(client, storage_path)
+    else:
+        signed_image = None
+
+    # Resolve signed thumbnail URL
+    signed_thumb = None
+    if thumbnail_path:
+        thumb_str = str(thumbnail_path)
+        if thumb_str.startswith("http"):
+            signed_thumb = thumb_str
+        elif signed_map and thumb_str in signed_map:
+            signed_thumb = signed_map[thumb_str]
+        else:
+            signed_thumb = _build_signed_view_url(client, thumb_str)
+
+    # Fall back to signed_image if thumbnail is missing or could not be signed
+    if not signed_thumb:
+        signed_thumb = signed_image
 
     return WardrobeItemResponse(
         id=str(row.get("id", "")),
@@ -433,7 +504,19 @@ async def list_wardrobe_items(
 
     rows = res.data or []
     total = res.count if res.count is not None else len(rows)
-    items = [_format_item_row(r, client) for r in rows]
+
+    # Collect all storage paths for batch URL signing (single roundtrip instead of 2 * N sequential calls)
+    all_paths: list[str] = []
+    for r in rows:
+        sp = r.get("storage_path")
+        tp = r.get("thumbnail_path")
+        if sp and isinstance(sp, str):
+            all_paths.append(sp)
+        if tp and isinstance(tp, str):
+            all_paths.append(tp)
+
+    signed_map = _batch_build_signed_view_urls(all_paths, client)
+    items = [_format_item_row(r, client, signed_map=signed_map) for r in rows]
 
     return WardrobeListResponse(
         items=items,
@@ -749,7 +832,7 @@ async def suggest_garment_tags(
                         "Authorization": f"Bearer {settings.OPENROUTER_API_KEY}",
                         "Content-Type": "application/json",
                         "HTTP-Referer": settings.SITE_URL,
-                        "X-Title": "FlashFit Fashion AI",
+                        "X-Title": "StyleSense Fashion AI",
                     },
                     json={
                         "model": model,

@@ -10,21 +10,68 @@ import math
 from typing import Any
 
 
+NAMED_COLORS: dict[str, tuple[float, float, float]] = {
+    "black": (0.1, 0.1, 0.1),
+    "white": (0.95, 0.95, 0.95),
+    "navy": (0.05, 0.1, 0.25),
+    "blue": (0.15, 0.35, 0.7),
+    "dark blue": (0.08, 0.18, 0.4),
+    "sky blue": (0.5, 0.7, 0.9),
+    "indigo": (0.2, 0.15, 0.55),
+    "gray": (0.5, 0.5, 0.5),
+    "grey": (0.5, 0.5, 0.5),
+    "pink": (0.9, 0.6, 0.7),
+    "blush": (0.87, 0.62, 0.62),
+    "green": (0.2, 0.5, 0.3),
+    "sage": (0.55, 0.65, 0.55),
+    "olive": (0.4, 0.45, 0.2),
+    "red": (0.8, 0.15, 0.15),
+    "cream": (0.96, 0.94, 0.88),
+    "ivory": (0.98, 0.96, 0.9),
+    "beige": (0.92, 0.88, 0.78),
+    "tan": (0.82, 0.71, 0.55),
+    "brown": (0.45, 0.3, 0.2),
+    "burgundy": (0.45, 0.1, 0.2),
+    "maroon": (0.5, 0.0, 0.0),
+    "mustard": (0.8, 0.6, 0.2),
+    "yellow": (0.95, 0.85, 0.2),
+    "teal": (0.18, 0.45, 0.45),
+    "orange": (0.95, 0.5, 0.1),
+    "coral": (0.95, 0.45, 0.4),
+    "purple": (0.5, 0.2, 0.6),
+    "lavender": (0.75, 0.65, 0.85),
+    "silver": (0.75, 0.75, 0.75),
+    "gold": (0.85, 0.75, 0.3),
+}
+
+
 def _normalize_hex(value: Any) -> tuple[float, float, float]:
-    """Convert a hex string, 3-tuple, or fallback to an RGB 0..1 triple."""
+    """Convert a hex string, named color, or 3-tuple to an RGB 0..1 triple."""
     if isinstance(value, (list, tuple)) and len(value) == 3:
-        return (float(value[0]), float(value[1]), float(value[2]))
+        try:
+            return (float(value[0]), float(value[1]), float(value[2]))
+        except (ValueError, TypeError):
+            return (0.8, 0.8, 0.8)
+
     if isinstance(value, str):
-        hex_value = value.strip().lstrip("#")
+        cleaned = value.strip().lower()
+        if cleaned in NAMED_COLORS:
+            return NAMED_COLORS[cleaned]
+
+        hex_value = cleaned.lstrip("#")
         if len(hex_value) == 3:
             hex_value = "".join(ch * 2 for ch in hex_value)
-        if len(hex_value) == 6:
-            return (
-                int(hex_value[0:2], 16) / 255.0,
-                int(hex_value[2:4], 16) / 255.0,
-                int(hex_value[4:6], 16) / 255.0,
-            )
-    return (1.0, 1.0, 1.0)
+        if len(hex_value) == 6 and all(c in "0123456789abcdef" for c in hex_value):
+            try:
+                return (
+                    int(hex_value[0:2], 16) / 255.0,
+                    int(hex_value[2:4], 16) / 255.0,
+                    int(hex_value[4:6], 16) / 255.0,
+                )
+            except ValueError:
+                pass
+
+    return (0.8, 0.8, 0.8)
 
 
 def _rgb_to_lab(rgb: tuple[float, float, float]) -> tuple[float, float, float]:

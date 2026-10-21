@@ -326,13 +326,23 @@ export const api = {
         body: JSON.stringify(data),
       }),
 
-    getSaved: () => request<SavedOutfitsListResponse>('/outfits/saved'),
+    getSaved: (tag?: string) => {
+      const qs = tag ? `?tag=${encodeURIComponent(tag)}` : ''
+      return request<SavedOutfitsListResponse>(`/outfits/saved${qs}`)
+    },
 
     get: (id: string) => request<OutfitResponse>(`/outfits/${id}`),
 
-    save: (id: string) =>
-      request<{ success: boolean; message: string }>(`/outfits/${id}/save`, {
+    save: (id: string, tags?: string[]) =>
+      request<{ success: boolean; message: string; is_saved: boolean; tags: string[] }>(`/outfits/${id}/save`, {
         method: 'POST',
+        body: JSON.stringify(tags ? { tags } : {}),
+      }),
+
+    updateTags: (id: string, tags: string[]) =>
+      request<{ success: boolean; tags: string[] }>(`/outfits/${id}/tags`, {
+        method: 'PUT',
+        body: JSON.stringify({ tags }),
       }),
 
     unsave: (id: string) =>
@@ -514,6 +524,9 @@ export interface GenerateOutfitsPayload {
   budget_max?: number
   min_quality_threshold?: number
   limit?: number
+  seed?: number
+  is_shuffle?: boolean
+  exclude_core_signatures?: [string, string][][]
 }
 
 export interface OutfitSlotItem {
@@ -533,6 +546,9 @@ export interface OutfitSlotItem {
   image_url?: string | null
 }
 
+export const APPROVED_OUTFIT_TAGS = ['Work', 'Date Night', 'Wedding', 'Vacation', 'Try Later'] as const
+export type OutfitTag = typeof APPROVED_OUTFIT_TAGS[number]
+
 export interface OutfitResponse {
   id: string
   user_id: string
@@ -547,8 +563,12 @@ export interface OutfitResponse {
   fallback_reason?: string | null
   unlocked_by_product_id?: string | null
   is_saved: boolean
+  tags?: string[]
   items: OutfitSlotItem[]
   created_at?: string | null
+  is_below_threshold?: boolean
+  quality_warning?: string | null
+  core_signature?: [string, string][]
 }
 
 export interface CatalogProductSuggestion {
@@ -575,11 +595,13 @@ export interface GenerateOutfitsResponse {
   budget_status?: string | null
   no_products_in_budget?: boolean
   cheapest_alternative?: CatalogProductSuggestion | null
+  quality_warning?: string | null
 }
 
 export interface SavedOutfitsListResponse {
   outfits: OutfitResponse[]
   total: number
+  available_tags?: string[]
 }
 
 // Gap Analysis Types

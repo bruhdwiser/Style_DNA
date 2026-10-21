@@ -17,6 +17,31 @@ from itertools import product
 from typing import Any
 
 
+def _value(item: Any, key: str, default: Any = None) -> Any:
+    """Attribute accessor that handles both dicts and objects."""
+    if isinstance(item, dict):
+        return item.get(key, default)
+    return getattr(item, key, default)
+
+
+def _extract_item_id(item: Any) -> str:
+    """Extract persistent garment UUID without ever falling back to memory address."""
+    val = _value(item, "id", None)
+    if val is None or not str(val).strip():
+        raise ValueError(f"Garment item {item!r} is missing a persistent 'id' attribute.")
+    return str(val).strip()
+
+
+CORE_SLOTS: frozenset[str] = frozenset({
+    "top",
+    "bottom",
+    "ethnic_bottom",
+    "dress",
+    "ethnic_set",
+    "saree",
+})
+
+
 @dataclass(frozen=True)
 class OutfitCandidate:
     """A slot-to-item mapping and the skeleton used to create it."""
@@ -27,9 +52,15 @@ class OutfitCandidate:
     @property
     def item_ids(self) -> tuple[str, ...]:
         """Stable identity tuple used for deduplication and diversification."""
-        return tuple(
-            str(getattr(item, "id", id(item)))
-            for item in self.slots.values()
+        return tuple(_extract_item_id(item) for item in self.slots.values())
+
+    @property
+    def core_signature(self) -> frozenset[tuple[str, str]]:
+        """Stable set of (slot, garment_id) pairs for all core slots present."""
+        return frozenset(
+            (slot, _extract_item_id(item))
+            for slot, item in self.slots.items()
+            if slot in CORE_SLOTS
         )
 
 
@@ -52,13 +83,6 @@ _OPTIONAL_CATEGORIES: dict[str, tuple[str, ...]] = {
     "layer": ("layer",),
     "bag": ("bag",),
 }
-
-
-def _value(item: Any, key: str, default: Any = None) -> Any:
-    """Attribute accessor that handles both dicts and objects."""
-    if isinstance(item, dict):
-        return item.get(key, default)
-    return getattr(item, key, default)
 
 
 def generate_candidates(
@@ -93,7 +117,15 @@ def generate_candidates(
     candidates: list[OutfitCandidate] = []
     seen: set[tuple[str, ...]] = set()
 
-    for skeleton_name, requirements in _SKELETONS:
+    has_shoes = bool(by_category.get("shoes"))
+
+    for skeleton_name, raw_requirements in _SKELETONS:
+        # If no shoes are available in the items, allow 2-piece / 1-piece looks without shoes
+        if not has_shoes:
+            requirements = tuple(req for req in raw_requirements if "shoes" not in req)
+        else:
+            requirements = raw_requirements
+
         choices = [
             [
                 item
@@ -111,25 +143,24 @@ def generate_candidates(
                 base_slots: dict[str, Any] = {
                     "top": combination[0],
                     "bottom": combination[1],
-                    "shoes": combination[2],
                 }
+                if len(combination) > 2:
+                    base_slots["shoes"] = combination[2]
             elif skeleton_name == "dress":
-                base_slots = {"dress": combination[0], "shoes": combination[1]}
+                base_slots = {"dress": combination[0]}
+                if len(combination) > 1:
+                    base_slots["shoes"] = combination[1]
             elif skeleton_name == "saree":
-                base_slots = {"saree": combination[0], "shoes": combination[1]}
+                base_slots = {"saree": combination[0]}
+                if len(combination) > 1:
+                    base_slots["shoes"] = combination[1]
             else:  # ethnic_set
-                base_slots = {"ethnic_set": combination[0], "shoes": combination[1]}
+                base_slots = {"ethnic_set": combination[0]}
+                if len(combination) > 1:
+                    base_slots["shoes"] = combination[1]
 
             # Reject combinations where the same item appears twice
-            if (
-                len(
-                    {
-                        str(_value(item, "id", id(item)))
-                        for item in base_slots.values()
-                    }
-                )
-                != len(base_slots)
-            ):
+            if len({_extract_item_id(item) for item in base_slots.values()}) != len(base_slots):
                 continue
 
             # Build variant list: base + optional single-item additions
@@ -137,16 +168,15 @@ def generate_candidates(
                 (base_slots, skeleton_name)
             ]
 
+            base_ids = {_extract_item_id(item) for item in base_slots.values()}
+
             for slot, categories in _OPTIONAL_CATEGORIES.items():
                 for optional_item in (
                     item
                     for category in categories
                     for item in by_category.get(category, [])
                 ):
-                    if str(_value(optional_item, "id", id(optional_item))) in {
-                        str(_value(item, "id", id(item)))
-                        for item in base_slots.values()
-                    }:
+                    if _extract_item_id(optional_item) in base_ids:
                         continue
                     variants.append(
                         ({**base_slots, slot: optional_item}, skeleton_name)
@@ -155,10 +185,7 @@ def generate_candidates(
             # Dupatta is optional for ethnic_set and saree looks
             if skeleton_name in ("ethnic_set", "saree"):
                 for accessory in by_category.get("dupatta", []):
-                    if str(_value(accessory, "id", id(accessory))) not in {
-                        str(_value(item, "id", id(item)))
-                        for item in base_slots.values()
-                    }:
+                    if _extract_item_id(accessory) not in base_ids:
                         variants.append(
                             ({**base_slots, "dupatta": accessory}, skeleton_name)
                         )
@@ -166,20 +193,14 @@ def generate_candidates(
             # Jewelry is optional for saree looks
             if skeleton_name == "saree":
                 for jewel in by_category.get("jewelry", []):
-                    if str(_value(jewel, "id", id(jewel))) not in {
-                        str(_value(item, "id", id(item)))
-                        for item in base_slots.values()
-                    }:
+                    if _extract_item_id(jewel) not in base_ids:
                         variants.append(
                             ({**base_slots, "jewelry": jewel}, skeleton_name)
                         )
 
             for slots, variant_name in variants:
                 identity = tuple(
-                    sorted(
-                        str(_value(item, "id", id(item)))
-                        for item in slots.values()
-                    )
+                    sorted(_extract_item_id(item) for item in slots.values())
                 )
                 if identity in seen:
                     continue

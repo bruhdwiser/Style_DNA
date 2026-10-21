@@ -16,7 +16,7 @@ BEGIN
         RAISE NOTICE 'User with email tanishq.shelar365@gmail.com not found. Please make sure the user is registered.';
     ELSE
         -- Insert or update admin user
-        INSERT INTO admin_users (user_id, role, permissions)
+        INSERT INTO public.admin_users (user_id, role, permissions)
         VALUES (
             target_user_id,
             'admin',
@@ -41,6 +41,6 @@ SELECT
     au.role,
     au.permissions,
     au.created_at
-FROM admin_users au
+FROM public.admin_users au
 JOIN auth.users u ON u.id = au.user_id
 WHERE u.email = 'tanishq.shelar365@gmail.com';

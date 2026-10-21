@@ -6,15 +6,81 @@ from typing import Any, Optional
 from pydantic import BaseModel, Field
 
 
+from ..core.exceptions import AppException
+
+APPROVED_OUTFIT_TAGS = ["Work", "Date Night", "Wedding", "Vacation", "Try Later"]
+APPROVED_OUTFIT_TAGS_MAP = {t.lower(): t for t in APPROVED_OUTFIT_TAGS}
+
+
+def validate_and_normalize_tags(
+    raw_tags: Optional[list[str]],
+    *,
+    allow_default: bool = False,
+    default_tags: Optional[list[str]] = None,
+) -> list[str]:
+    """Validate and normalize outfit tags to approved canonical labels.
+
+    - Normalizes case and collapses irregular whitespace (e.g. '  date   night  ' -> 'Date Night').
+    - Deduplicates identical canonical tags preserving order.
+    - If allow_default is True and raw_tags is None (or empty), returns default_tags or ['Try Later'].
+    - If allow_default is False and raw_tags is empty, returns [].
+    - Rejects any tag not present in APPROVED_OUTFIT_TAGS with an AppException(422).
+    """
+    if raw_tags is None:
+        if allow_default:
+            return list(default_tags or ["Try Later"])
+        return []
+
+    if len(raw_tags) == 0:
+        if allow_default:
+            return list(default_tags or ["Try Later"])
+        return []
+
+    normalized: list[str] = []
+    for t in raw_tags:
+        if not isinstance(t, str):
+            raise AppException(
+                message=f"Tag must be a string, got {type(t).__name__}.",
+                code="INVALID_TAG",
+                status_code=422,
+            )
+        clean = " ".join(t.strip().split())
+        if not clean:
+            raise AppException(
+                message=f"Empty tag is not permitted. Approved tags are: {', '.join(APPROVED_OUTFIT_TAGS)}.",
+                code="INVALID_TAG",
+                status_code=422,
+            )
+        canonical = APPROVED_OUTFIT_TAGS_MAP.get(clean.lower())
+        if not canonical:
+            raise AppException(
+                message=f"Unsupported tag '{t}'. Approved tags are: {', '.join(APPROVED_OUTFIT_TAGS)}.",
+                code="INVALID_TAG",
+                status_code=422,
+            )
+        if canonical not in normalized:
+            normalized.append(canonical)
+
+    return normalized
+
+
+def normalize_outfit_tags(raw_tags: Optional[list[str]]) -> list[str]:
+    """Backward-compatible helper defaulting to ['Try Later'] for save flows."""
+    return validate_and_normalize_tags(raw_tags, allow_default=True)
+
+
 class GenerateOutfitsRequest(BaseModel):
     occasion: str = Field(default="casual", description="Occasion: casual, work, party, formal, festive, wedding, lounge, college")
     vibe: Optional[str] = Field(default=None, description="Aesthetic vibe: minimal, classic, bohemian, streetwear, elegant")
     season: str = Field(default="all_season", description="Seasonal filter: summer, winter, monsoon, all_season")
-    wardrobe_only: bool = Field(default=True, description="Strictly wardrobe items only (no catalog items)")
-    allow_one_new_item: bool = Field(default=False, description="Allow fallback with exactly one new catalog product if wardrobe lacks required slot or too few high-scoring outfits")
+    wardrobe_only: bool = Field(default=False, description="Strictly wardrobe items only (opt out of catalog completion)")
+    allow_one_new_item: Optional[bool] = Field(default=None, description="Legacy alias: if True, enables catalog completion")
     budget_max: Optional[float] = Field(default=None, description="Maximum price in INR for catalog item")
     min_quality_threshold: float = Field(default=0.70, description="Minimum score threshold below which fallback can be activated")
     limit: int = Field(default=6, ge=1, le=20, description="Maximum number of diversified outfits to generate")
+    seed: Optional[int] = Field(default=None, description="Random seed for varied, non-redundant outfit recommendations")
+    is_shuffle: bool = Field(default=False, description="Shuffle mode for fresh alternative recommendations")
+    exclude_core_signatures: Optional[list[list[tuple[str, str]]]] = Field(default=None, description="Core signatures to exclude on shuffle")
 
 
 class OutfitSlotItem(BaseModel):
@@ -48,17 +114,37 @@ class OutfitResponse(BaseModel):
     fallback_reason: Optional[str] = None
     unlocked_by_product_id: Optional[str] = None
     is_saved: bool = False
+    is_below_threshold: bool = False
+    quality_warning: Optional[str] = None
+    tags: list[str] = Field(default_factory=list, description="Classification tags for saved looks")
+    core_signature: list[tuple[str, str]] = Field(default_factory=list, description="Sorted (slot, item_id) pairs of core garments")
     items: list[OutfitSlotItem] = []
     created_at: Optional[str] = None
 
 
+class SaveOutfitRequest(BaseModel):
+    tags: Optional[list[str]] = Field(default=None, description="Optional classification tags (e.g. Work, Date Night, Wedding, Vacation, Try Later)")
+
+
+class SaveOutfitResponse(BaseModel):
+    success: bool = True
+    message: str
+    is_saved: bool = True
+    tags: list[str] = Field(default_factory=list)
+
+
+class UpdateOutfitTagsRequest(BaseModel):
+    tags: list[str] = Field(..., description="Tags to assign to the saved outfit")
+
+
 class GenerateOutfitsResponse(BaseModel):
     outfits: list[OutfitResponse] = []
-    status: str = "success"  # "success", "empty_wardrobe", "missing_required_slots", "no_matching_combinations"
+    status: str = "success"  # "success", "partial_results", "empty_wardrobe", "missing_required_slots", "no_matching_combinations"
     message: Optional[str] = None
     missing_slots: list[str] = []
     profile_warning: Optional[str] = None
-    budget_status: Optional[str] = None  # "within_budget", "no_products_in_budget"
+    quality_warning: Optional[str] = None
+    budget_status: Optional[str] = None  # "within_budget", "no_products_in_budget", "no_products_found"
     no_products_in_budget: bool = False
     cheapest_alternative: Optional[dict[str, Any]] = None
 
@@ -66,3 +152,4 @@ class GenerateOutfitsResponse(BaseModel):
 class SavedOutfitsListResponse(BaseModel):
     outfits: list[OutfitResponse] = []
     total: int = 0
+    available_tags: list[str] = Field(default_factory=list, description="Unique set of tags present across user's saved looks")

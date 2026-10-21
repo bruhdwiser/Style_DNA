@@ -1,151 +1,156 @@
--- Drop existing policies if they exist
-DROP POLICY IF EXISTS "Service role can do everything on analytics_events" ON analytics_events;
-DROP POLICY IF EXISTS "Users can view their own analytics events" ON analytics_events;
-DROP POLICY IF EXISTS "Admins can view all analytics events" ON analytics_events;
-DROP POLICY IF EXISTS "Service role can do everything on user_sessions" ON user_sessions;
-DROP POLICY IF EXISTS "Users can view their own sessions" ON user_sessions;
-DROP POLICY IF EXISTS "Admins can view all sessions" ON user_sessions;
-DROP POLICY IF EXISTS "Admins can view admin_users table" ON admin_users;
+-- FlashFit analytics and admin tables.
+-- Run second in the Supabase SQL Editor, after scripts/schema.sql.
+-- Safe to re-run: tables/indexes/functions are idempotent and named policies
+-- and trigger are replaced below. Admin membership is never client-writable.
 
--- Drop existing triggers and functions
-DROP TRIGGER IF EXISTS update_session_on_page_view ON analytics_events;
-DROP FUNCTION IF EXISTS update_session_activity();
-DROP FUNCTION IF EXISTS is_admin(UUID);
+begin;
 
--- Analytics Events Table
-CREATE TABLE IF NOT EXISTS analytics_events (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  event_type TEXT NOT NULL,
-  event_data JSONB NOT NULL,
-  user_id UUID REFERENCES auth.users(id) ON DELETE SET NULL,
-  session_id TEXT NOT NULL,
-  ip_address TEXT,
-  user_agent TEXT,
-  created_at TIMESTAMPTZ DEFAULT NOW()
+create table if not exists public.analytics_events (
+  id uuid primary key default gen_random_uuid(),
+  event_type text not null,
+  event_data jsonb not null,
+  user_id uuid references auth.users(id) on delete set null,
+  session_id text not null,
+  ip_address text,
+  user_agent text,
+  created_at timestamptz not null default now()
 );
 
--- User Sessions Table
-CREATE TABLE IF NOT EXISTS user_sessions (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  session_id TEXT UNIQUE NOT NULL,
-  user_id UUID REFERENCES auth.users(id) ON DELETE SET NULL,
-  started_at TIMESTAMPTZ DEFAULT NOW(),
-  last_active_at TIMESTAMPTZ DEFAULT NOW(),
-  page_count INTEGER DEFAULT 0,
-  device_info JSONB,
-  location_info JSONB
+create table if not exists public.user_sessions (
+  id uuid primary key default gen_random_uuid(),
+  session_id text unique not null,
+  user_id uuid references auth.users(id) on delete set null,
+  started_at timestamptz not null default now(),
+  last_active_at timestamptz not null default now(),
+  page_count integer not null default 0,
+  device_info jsonb,
+  location_info jsonb
 );
 
--- Admin Users Table (for role-based access)
-CREATE TABLE IF NOT EXISTS admin_users (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE UNIQUE NOT NULL,
-  role TEXT NOT NULL DEFAULT 'admin',
-  permissions JSONB DEFAULT '{"analytics": true, "users": false, "products": false}'::jsonb,
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  updated_at TIMESTAMPTZ DEFAULT NOW()
+create table if not exists public.admin_users (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references auth.users(id) on delete cascade unique not null,
+  role text not null default 'admin',
+  permissions jsonb not null default '{"analytics": true, "users": false, "products": false}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
 );
 
--- Indexes for better query performance
-CREATE INDEX IF NOT EXISTS idx_analytics_events_event_type ON analytics_events(event_type);
-CREATE INDEX IF NOT EXISTS idx_analytics_events_created_at ON analytics_events(created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_analytics_events_user_id ON analytics_events(user_id);
-CREATE INDEX IF NOT EXISTS idx_analytics_events_session_id ON analytics_events(session_id);
-CREATE INDEX IF NOT EXISTS idx_user_sessions_session_id ON user_sessions(session_id);
-CREATE INDEX IF NOT EXISTS idx_user_sessions_user_id ON user_sessions(user_id);
-CREATE INDEX IF NOT EXISTS idx_admin_users_user_id ON admin_users(user_id);
+create index if not exists idx_analytics_events_event_type on public.analytics_events(event_type);
+create index if not exists idx_analytics_events_created_at on public.analytics_events(created_at desc);
+create index if not exists idx_analytics_events_user_id on public.analytics_events(user_id);
+create index if not exists idx_analytics_events_session_id on public.analytics_events(session_id);
+create index if not exists idx_user_sessions_session_id on public.user_sessions(session_id);
+create index if not exists idx_user_sessions_user_id on public.user_sessions(user_id);
+create index if not exists idx_admin_users_user_id on public.admin_users(user_id);
 
--- Enable RLS
-ALTER TABLE analytics_events ENABLE ROW LEVEL SECURITY;
-ALTER TABLE user_sessions ENABLE ROW LEVEL SECURITY;
-ALTER TABLE admin_users ENABLE ROW LEVEL SECURITY;
+alter table public.analytics_events enable row level security;
+alter table public.user_sessions enable row level security;
+alter table public.admin_users enable row level security;
 
--- Analytics Events Policies
-CREATE POLICY "Service role can do everything on analytics_events"
-  ON analytics_events FOR ALL TO service_role
-  USING (true) WITH CHECK (true);
-
-CREATE POLICY "Allow anonymous insert on analytics_events"
-  ON analytics_events FOR INSERT TO anon
-  WITH CHECK (true);
-
-CREATE POLICY "Allow authenticated insert on analytics_events"
-  ON analytics_events FOR INSERT TO authenticated
-  WITH CHECK (true);
-
-CREATE POLICY "Users can view their own analytics events"
-  ON analytics_events FOR SELECT TO authenticated
-  USING (user_id = auth.uid());
-
-CREATE POLICY "Admins can view all analytics events"
-  ON analytics_events FOR SELECT TO authenticated
-  USING (
-    EXISTS (SELECT 1 FROM admin_users WHERE admin_users.user_id = auth.uid())
+-- SECURITY DEFINER avoids recursive admin_users RLS checks. The empty search
+-- path plus schema-qualified objects prevents search_path object substitution.
+create or replace function public.is_admin()
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select exists (
+    select 1
+    from public.admin_users
+    where user_id = auth.uid()
+      and role in ('admin', 'super_admin')
   );
+$$;
 
--- User Sessions Policies
-CREATE POLICY "Service role can do everything on user_sessions"
-  ON user_sessions FOR ALL TO service_role
-  USING (true) WITH CHECK (true);
+revoke all on function public.is_admin() from public;
+grant execute on function public.is_admin() to authenticated;
+drop function if exists public.is_admin(uuid);
 
-CREATE POLICY "Allow anonymous insert on user_sessions"
-  ON user_sessions FOR INSERT TO anon
-  WITH CHECK (true);
+create or replace function public.update_session_activity()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  update public.user_sessions
+  set last_active_at = now(), page_count = page_count + 1
+  where session_id = new.session_id;
+  return new;
+end;
+$$;
 
-CREATE POLICY "Allow anonymous update on user_sessions"
-  ON user_sessions FOR UPDATE TO anon
-  USING (true) WITH CHECK (true);
+revoke all on function public.update_session_activity() from public;
 
-CREATE POLICY "Allow authenticated insert on user_sessions"
-  ON user_sessions FOR INSERT TO authenticated
-  WITH CHECK (true);
+drop trigger if exists update_session_on_page_view on public.analytics_events;
+create trigger update_session_on_page_view
+  after insert on public.analytics_events
+  for each row
+  when (new.event_type = 'page_view')
+  execute function public.update_session_activity();
 
-CREATE POLICY "Users can view their own sessions"
-  ON user_sessions FOR SELECT TO authenticated
-  USING (user_id = auth.uid());
+-- Remove policies created by both historical analytics scripts before
+-- recreating them. PostgreSQL has no CREATE POLICY IF NOT EXISTS syntax.
+drop policy if exists "Service role can do everything on analytics_events" on public.analytics_events;
+drop policy if exists "Allow anonymous insert on analytics_events" on public.analytics_events;
+drop policy if exists "Allow authenticated insert on analytics_events" on public.analytics_events;
+drop policy if exists "Users can view their own analytics events" on public.analytics_events;
+drop policy if exists "Admins can view all analytics events" on public.analytics_events;
+drop policy if exists "Service role can do everything on user_sessions" on public.user_sessions;
+drop policy if exists "Allow anonymous insert on user_sessions" on public.user_sessions;
+drop policy if exists "Allow anonymous update on user_sessions" on public.user_sessions;
+drop policy if exists "Allow authenticated insert on user_sessions" on public.user_sessions;
+drop policy if exists "Users can view their own sessions" on public.user_sessions;
+drop policy if exists "Admins can view all sessions" on public.user_sessions;
+drop policy if exists "Admins can view admin_users table" on public.admin_users;
+drop policy if exists "Users can view own admin membership" on public.admin_users;
 
-CREATE POLICY "Admins can view all sessions"
-  ON user_sessions FOR SELECT TO authenticated
-  USING (
-    EXISTS (SELECT 1 FROM admin_users WHERE admin_users.user_id = auth.uid())
-  );
+create policy "Service role can do everything on analytics_events"
+  on public.analytics_events for all to service_role
+  using (true) with check (true);
+create policy "Allow anonymous insert on analytics_events"
+  on public.analytics_events for insert to anon with check (true);
+create policy "Allow authenticated insert on analytics_events"
+  on public.analytics_events for insert to authenticated
+  with check (user_id is null or user_id = auth.uid());
+create policy "Users can view their own analytics events"
+  on public.analytics_events for select to authenticated
+  using (user_id = auth.uid());
+create policy "Admins can view all analytics events"
+  on public.analytics_events for select to authenticated
+  using (public.is_admin());
 
--- Admin Users Policies
-CREATE POLICY "Admins can view admin_users table"
-  ON admin_users FOR SELECT TO authenticated
-  USING (
-    EXISTS (SELECT 1 FROM admin_users WHERE admin_users.user_id = auth.uid())
-  );
+create policy "Service role can do everything on user_sessions"
+  on public.user_sessions for all to service_role
+  using (true) with check (true);
+create policy "Allow anonymous insert on user_sessions"
+  on public.user_sessions for insert to anon with check (true);
+-- The server's public-key client uses an upsert for anonymous and signed-in
+-- tracking. This policy permits that telemetry update, but not reads/deletes.
+create policy "Allow anonymous update on user_sessions"
+  on public.user_sessions for update to anon using (true) with check (true);
+create policy "Allow authenticated insert on user_sessions"
+  on public.user_sessions for insert to authenticated
+  with check (user_id is null or user_id = auth.uid());
+create policy "Users can view their own sessions"
+  on public.user_sessions for select to authenticated
+  using (user_id = auth.uid());
+create policy "Admins can view all sessions"
+  on public.user_sessions for select to authenticated
+  using (public.is_admin());
 
--- Function to check if user is admin
-CREATE OR REPLACE FUNCTION is_admin(user_uuid UUID)
-RETURNS BOOLEAN AS $$
-BEGIN
-  RETURN EXISTS (SELECT 1 FROM admin_users WHERE user_id = user_uuid);
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+-- Users may inspect their own admin membership, but cannot grant or change it.
+create policy "Users can view own admin membership"
+  on public.admin_users for select to authenticated
+  using (user_id = auth.uid());
 
--- Function to automatically update last_active_at
-CREATE OR REPLACE FUNCTION update_session_activity()
-RETURNS TRIGGER AS $$
-BEGIN
-  UPDATE user_sessions
-  SET last_active_at = NOW(), page_count = page_count + 1
-  WHERE session_id = NEW.session_id;
-  RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
+grant usage on schema public to anon, authenticated, service_role;
+grant select, insert on public.analytics_events to anon, authenticated;
+grant select, insert, update on public.user_sessions to anon, authenticated;
+grant select on public.admin_users to authenticated;
+grant all on public.analytics_events, public.user_sessions, public.admin_users to service_role;
 
--- Trigger to update session activity on page view
-CREATE TRIGGER update_session_on_page_view
-  AFTER INSERT ON analytics_events
-  FOR EACH ROW WHEN (NEW.event_type = 'page_view')
-  EXECUTE FUNCTION update_session_activity();
-
--- Grant necessary permissions
-GRANT USAGE ON SCHEMA public TO authenticated, anon;
-GRANT SELECT ON analytics_events TO authenticated, anon;
-GRANT INSERT ON analytics_events TO authenticated, anon;
-GRANT SELECT ON user_sessions TO authenticated, anon;
-GRANT INSERT, UPDATE ON user_sessions TO authenticated, anon;
-GRANT SELECT ON admin_users TO authenticated;
+commit;
