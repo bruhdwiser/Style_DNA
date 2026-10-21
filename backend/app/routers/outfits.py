@@ -371,30 +371,15 @@ async def generate_outfit_recommendations(
         profile_warning = "Could not load style profile; proceeding with neutral defaults."
 
     # 5. Format items for pure engine
+    from ..styling.taxonomy import normalize_manifest_item
+
     engine_items = []
     item_by_id: dict[str, dict[str, Any]] = {}
     for raw in wardrobe_items:
-        raw_id = str(raw["id"])
+        norm = normalize_manifest_item(raw)
+        raw_id = norm["id"]
         item_by_id[raw_id] = raw
-        engine_items.append({
-            "id": raw_id,
-            "category": raw.get("slot") or raw.get("category", "top"),
-            "slot": raw.get("slot", "top"),
-            "sub_category": raw.get("sub_category"),
-            "color": raw.get("primary_color"),
-            "colors": raw.get("color_tags") or [],
-            "fit": raw.get("fit"),
-            "formality": raw.get("formality", 1),
-            "occasions": raw.get("occasions") or [],
-            "seasons": raw.get("seasons") or [],
-            "styles": raw.get("style_tags") or [],
-            "pattern": raw.get("pattern", "solid"),
-            "neckline": raw.get("neckline"),
-            "rise": raw.get("rise"),
-            "length": raw.get("length"),
-            "is_available": True,
-            "source_type": "wardrobe",
-        })
+        engine_items.append(norm)
 
     # 6. Load caller's outfit events to derive Style DNA affinities
     affinities: dict[str, Any] = {}
@@ -424,27 +409,53 @@ async def generate_outfit_recommendations(
             if cleaned_pairs:
                 exclude_cores.add(frozenset(cleaned_pairs))
 
-    # 7. Generate wardrobe-only candidates first
+    # 7. Generate wardrobe-only candidates across complete pool
     wardrobe_candidates: list[OutfitCandidate] = []
     if coverage.get("is_ready_for_outfits"):
+        # First evaluate complete pool against min_quality_threshold to prevent false negatives
         wardrobe_candidates = generate_outfits(
             engine_items,
             occasion=occasion,
             season=season,
             vibe=body.vibe,
             vibes=body.vibes,
-            body_shape=body_shape,
+            body_shape=None,
             attrs=attrs,
             affinities=affinities,
             seed=body.seed,
             limit=max(12, body.limit * 2),
             is_shuffle=body.is_shuffle,
             exclude_core_signatures=exclude_cores if body.is_shuffle else None,
+            min_score=body.min_quality_threshold,
         )
+        # If no above-threshold candidates qualify, generate all candidates for below-threshold fallback
+        if not wardrobe_candidates:
+            wardrobe_candidates = generate_outfits(
+                engine_items,
+                occasion=occasion,
+                season=season,
+                vibe=body.vibe,
+                vibes=body.vibes,
+                body_shape=None,
+                attrs=attrs,
+                affinities=affinities,
+                seed=body.seed,
+                limit=max(12, body.limit * 2),
+                is_shuffle=body.is_shuffle,
+                exclude_core_signatures=exclude_cores if body.is_shuffle else None,
+                min_score=None,
+            )
 
     # 8. Partition wardrobe candidates by quality threshold
     above_threshold_wardrobe: list[tuple[float, OutfitCandidate, dict[str, float], list[str]]] = []
     below_threshold_wardrobe: list[tuple[float, OutfitCandidate, dict[str, float], list[str]]] = []
+
+    target_vibe_label = (
+        str(body.vibe).strip().lower()
+        if body.vibe and str(body.vibe).strip()
+        else (str(body.vibes[0]).strip().lower() if body.vibes and body.vibes[0] else None)
+    )
+    max_vibe_in_pool = 0.0
 
     for cand in wardrobe_candidates:
         scores = feature_scores(
@@ -453,9 +464,11 @@ async def generate_outfit_recommendations(
             season=season,
             vibe=body.vibe,
             vibes=body.vibes,
-            body_shape=body_shape,
+            body_shape=None,
             attrs=attrs,
         )
+        if target_vibe_label:
+            max_vibe_in_pool = max(max_vibe_in_pool, scores.get("vibe_affinity", 0.0))
         base_score = float(
             score_outfit(
                 cand,
@@ -463,7 +476,7 @@ async def generate_outfit_recommendations(
                 season=season,
                 vibe=body.vibe,
                 vibes=body.vibes,
-                body_shape=body_shape,
+                body_shape=None,
                 attrs=attrs,
             )
         )
@@ -476,7 +489,9 @@ async def generate_outfit_recommendations(
             cand,
             occasion=occasion,
             season=season,
-            body_shape=body_shape,
+            vibe=body.vibe,
+            vibes=body.vibes,
+            body_shape=None,
             attrs=attrs,
             affinities=affinities,
         )
@@ -486,6 +501,17 @@ async def generate_outfit_recommendations(
             above_threshold_wardrobe.append(item_tuple)
         else:
             below_threshold_wardrobe.append(item_tuple)
+
+    vibe_coverage_level: Optional[str] = None
+    if target_vibe_label:
+        if max_vibe_in_pool >= 0.70:
+            vibe_coverage_level = "high"
+        elif max_vibe_in_pool >= 0.40:
+            vibe_coverage_level = "moderate"
+        elif max_vibe_in_pool > 0.0:
+            vibe_coverage_level = "low"
+        else:
+            vibe_coverage_level = "none"
 
     selected_looks: list[dict[str, Any]] = []
     chosen_core_sigs: set[frozenset[tuple[str, str]]] = set()
@@ -625,11 +651,11 @@ async def generate_outfit_recommendations(
                 if not hard_filter_candidate(cand, occasion, season):
                     continue
 
-                base_score = float(score_outfit(cand, occasion=occasion, season=season, body_shape=body_shape, attrs=attrs))
+                base_score = float(score_outfit(cand, occasion=occasion, season=season, vibe=body.vibe, vibes=body.vibes, body_shape=None, attrs=attrs))
                 affinity_delta, _ = compute_outfit_affinity_adjustment(cand, affinities) if affinities else (0.0, [])
                 total_score = round(max(0.0, min(1.0, base_score + affinity_delta)), 3)
 
-                scores = feature_scores(cand, occasion=occasion, season=season, body_shape=body_shape, attrs=attrs)
+                scores = feature_scores(cand, occasion=occasion, season=season, vibe=body.vibe, vibes=body.vibes, body_shape=None, attrs=attrs)
                 if affinities and affinities.get("total_events"):
                     scores["style_dna"] = round(max(0.0, min(1.0, 0.5 + (affinity_delta / 0.16))), 3)
 
@@ -637,7 +663,9 @@ async def generate_outfit_recommendations(
                     cand,
                     occasion=occasion,
                     season=season,
-                    body_shape=body_shape,
+                    vibe=body.vibe,
+                    vibes=body.vibes,
+                    body_shape=None,
                     attrs=attrs,
                     affinities=affinities,
                 )
@@ -840,6 +868,7 @@ async def generate_outfit_recommendations(
                 message=f"No further unseen combinations could be created from your rack for '{body.occasion}'. All valid looks have been shown.",
                 missing_slots=[],
                 profile_warning=profile_warning,
+                vibe_coverage=vibe_coverage_level,
                 budget_status=budget_status,
                 no_products_in_budget=no_products_in_budget,
                 cheapest_alternative=cheapest_alt,
@@ -860,6 +889,7 @@ async def generate_outfit_recommendations(
             message=msg_val,
             missing_slots=critical_missing,
             profile_warning=profile_warning,
+            vibe_coverage=vibe_coverage_level,
             budget_status=budget_status,
             no_products_in_budget=no_products_in_budget,
             cheapest_alternative=cheapest_alt,
@@ -981,6 +1011,7 @@ async def generate_outfit_recommendations(
                 is_saved=False,
                 is_below_threshold=is_below,
                 quality_warning=q_warn,
+                vibe_coverage=vibe_coverage_level,
                 core_signature=sorted(list(cand.core_signature)),
                 items=slot_items,
                 created_at=now_iso,
@@ -1017,6 +1048,11 @@ async def generate_outfit_recommendations(
         message = "Showing your wardrobe outfits followed by recommended mixed looks."
     elif any(not o.wardrobe_only for o in persisted_outfits):
         message = "Showing outfits completed with catalog items."
+    elif target_vibe_label and vibe_coverage_level in ("low", "none"):
+        message = (
+            f"Your wardrobe has limited {target_vibe_label} pieces suitable for '{occasion}'; "
+            f"recommended looks prioritize {occasion} dress code and structural compatibility."
+        )
 
     quality_warning_summary = None
     if below_threshold_included > 0:
@@ -1032,6 +1068,7 @@ async def generate_outfit_recommendations(
         missing_slots=[],
         profile_warning=profile_warning,
         quality_warning=quality_warning_summary,
+        vibe_coverage=vibe_coverage_level,
         budget_status=budget_status,
         no_products_in_budget=no_products_in_budget,
         cheapest_alternative=cheapest_alt,

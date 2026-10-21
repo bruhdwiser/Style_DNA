@@ -24,6 +24,17 @@ def _value(item: Any, key: str, default: Any = None) -> Any:
     return getattr(item, key, default)
 
 
+def is_item_available(item: Any) -> bool:
+    """Return False if item is explicitly marked unavailable in boolean or string format."""
+    val = _value(item, "is_available", None)
+    if val is None:
+        val = _value(item, "available", True)
+    if isinstance(val, str):
+        return val.strip().lower() not in ("false", "0", "no", "n")
+    return bool(val)
+
+
+
 def _extract_item_id(item: Any) -> str:
     """Extract persistent garment UUID without ever falling back to memory address."""
     val = _value(item, "id", None)
@@ -87,7 +98,7 @@ _OPTIONAL_CATEGORIES: dict[str, tuple[str, ...]] = {
 
 def generate_candidates(
     items: Iterable[Any],
-    max_candidates: int = 5000,
+    max_candidates: int = 25000,
 ) -> list[OutfitCandidate]:
     """Build valid garment combinations in stable order with a hard upper bound.
 
@@ -102,7 +113,7 @@ def generate_candidates(
     if max_candidates < 1:
         return []
 
-    available = [item for item in items if _value(item, "is_available", True)]
+    available = [item for item in items if is_item_available(item)]
     by_category: dict[str, list[Any]] = {}
     for item in available:
         category = _value(item, "category")
@@ -195,6 +206,15 @@ def generate_candidates(
 
             # Jewelry is optional for saree looks
             if skeleton_name == "saree":
+                # Blouse is required/optional companion for saree
+                for blouse_item in by_category.get("top", []):
+                    b_sub = str(_value(blouse_item, "sub_category", "") or _value(blouse_item, "subtype", "") or _value(blouse_item, "piece_id", "")).lower()
+                    b_role = str(_value(blouse_item, "role", "")).lower()
+                    if b_role == "blouse" or "blouse" in b_sub or "crop_top" in b_sub:
+                        if _extract_item_id(blouse_item) not in base_ids:
+                            variants.append(
+                                ({**base_slots, "top": blouse_item}, skeleton_name)
+                            )
                 for jewel in by_category.get("jewelry", []):
                     if _extract_item_id(jewel) not in base_ids:
                         variants.append(

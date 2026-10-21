@@ -13,6 +13,7 @@ from typing import Any, Optional
 # Canonical piece roles
 class PieceRole:
     TOP = "top"
+    ETHNIC_TOP = "ethnic_top"
     BOTTOM = "bottom"
     ETHNIC_BOTTOM = "ethnic_bottom"
     DRESS = "dress"
@@ -25,6 +26,7 @@ class PieceRole:
     JEWELRY = "jewelry"
     DUPATTA = "dupatta"
     ACCESSORY = "accessory"
+    BLOUSE = "blouse"
 
 
 # Canonical occasion taxonomy and synonyms
@@ -113,19 +115,30 @@ SUBCATEGORY_TO_ROLE: dict[str, str] = {
     "lehenga_bottom": PieceRole.LEHENGA_SEPARATE,
     "palazzo": PieceRole.ETHNIC_BOTTOM,
     "salwar": PieceRole.ETHNIC_BOTTOM,
+    "dhoti": PieceRole.ETHNIC_BOTTOM,
     "churidar": PieceRole.ETHNIC_BOTTOM,
     "ethnic_skirt": PieceRole.ETHNIC_BOTTOM,
     "saree": PieceRole.SAREE,
     "anarkali": PieceRole.ETHNIC_SET,
     "lehenga": PieceRole.ETHNIC_SET,
+    "lehenga_set": PieceRole.ETHNIC_SET,
     "kurta_set": PieceRole.ETHNIC_SET,
+    "kurti_set": PieceRole.ETHNIC_SET,
     "co-ord": PieceRole.ETHNIC_SET,
+    "coord_set": PieceRole.ETHNIC_SET,
     "dupatta": PieceRole.DUPATTA,
     "blazer": PieceRole.LAYER,
     "jacket": PieceRole.LAYER,
     "cardigan": PieceRole.LAYER,
     "shrug": PieceRole.LAYER,
+    "ethnic_jacket": PieceRole.LAYER,
     "coat": PieceRole.LAYER,
+    "blouse": PieceRole.BLOUSE,
+    "sneakers": PieceRole.SHOES,
+    "chappals": PieceRole.SHOES,
+    "mules": PieceRole.SHOES,
+    "heels": PieceRole.SHOES,
+    "jutti": PieceRole.SHOES,
 }
 
 CATEGORY_TO_ROLE: dict[str, str] = {
@@ -144,12 +157,148 @@ CATEGORY_TO_ROLE: dict[str, str] = {
     "accessory": PieceRole.ACCESSORY,
 }
 
+PIECE_ID_METADATA: dict[str, dict[str, Any]] = {
+    "tshirt": {"category": "top", "slot": "top", "role": PieceRole.TOP, "formality": 1},
+    "tank": {"category": "top", "slot": "top", "role": PieceRole.TOP, "formality": 1},
+    "crop_top": {"category": "top", "slot": "top", "role": PieceRole.TOP, "formality": 2},
+    "shirt_formal": {"category": "top", "slot": "top", "role": PieceRole.TOP, "formality": 3},
+    "sweater": {"category": "top", "slot": "top", "role": PieceRole.TOP, "formality": 3},
+    "hoodie": {"category": "top", "slot": "top", "role": PieceRole.TOP, "formality": 1},
+    "kurti": {"category": "top", "slot": "top", "role": PieceRole.TOP, "formality": 2},
+    "blouse": {"category": "top", "slot": "top", "role": PieceRole.BLOUSE, "formality": 4},
+    "jeans": {"category": "bottom", "slot": "bottom", "role": PieceRole.BOTTOM, "formality": 2},
+    "trousers_casual": {"category": "bottom", "slot": "bottom", "role": PieceRole.BOTTOM, "formality": 1},
+    "skirt": {"category": "bottom", "slot": "bottom", "role": PieceRole.BOTTOM, "formality": 2},
+    "shorts": {"category": "bottom", "slot": "bottom", "role": PieceRole.BOTTOM, "formality": 1},
+    "palazzo": {"category": "ethnic_bottom", "slot": "ethnic_bottom", "role": PieceRole.ETHNIC_BOTTOM, "formality": 2},
+    "salwar": {"category": "ethnic_bottom", "slot": "ethnic_bottom", "role": PieceRole.ETHNIC_BOTTOM, "formality": 2},
+    "lehenga_skirt": {"category": "ethnic_bottom", "slot": "ethnic_bottom", "role": PieceRole.LEHENGA_SEPARATE, "formality": 4},
+    "midi_dress": {"category": "dress", "slot": "dress", "role": PieceRole.DRESS, "formality": 3},
+    "mini_dress": {"category": "dress", "slot": "dress", "role": PieceRole.DRESS, "formality": 3},
+    "maxi_dress": {"category": "dress", "slot": "dress", "role": PieceRole.DRESS, "formality": 2},
+    "jumpsuit": {"category": "dress", "slot": "dress", "role": PieceRole.DRESS, "formality": 3},
+    "coord_set": {"category": "ethnic_set", "slot": "ethnic_set", "role": PieceRole.ETHNIC_SET, "formality": 2},
+    "kurti_set": {"category": "ethnic_set", "slot": "ethnic_set", "role": PieceRole.ETHNIC_SET, "formality": 3},
+    "anarkali": {"category": "ethnic_set", "slot": "ethnic_set", "role": PieceRole.ETHNIC_SET, "formality": 4},
+    "lehenga_set": {"category": "ethnic_set", "slot": "ethnic_set", "role": PieceRole.ETHNIC_SET, "formality": 5},
+    "saree": {"category": "saree", "slot": "saree", "role": PieceRole.SAREE, "formality": 4},
+    "jacket": {"category": "layer", "slot": "layer", "role": PieceRole.LAYER, "formality": 2},
+    "cardigan": {"category": "layer", "slot": "layer", "role": PieceRole.LAYER, "formality": 2},
+    "shrug": {"category": "layer", "slot": "layer", "role": PieceRole.LAYER, "formality": 2},
+    "ethnic_jacket": {"category": "layer", "slot": "layer", "role": PieceRole.LAYER, "formality": 4},
+    "sneakers": {"category": "shoes", "slot": "shoes", "role": PieceRole.SHOES, "formality": 1},
+    "chappals": {"category": "shoes", "slot": "shoes", "role": PieceRole.SHOES, "formality": 2},
+    "mules": {"category": "shoes", "slot": "shoes", "role": PieceRole.SHOES, "formality": 3},
+    "heels": {"category": "shoes", "slot": "shoes", "role": PieceRole.SHOES, "formality": 4},
+    "jutti": {"category": "shoes", "slot": "shoes", "role": PieceRole.SHOES, "formality": 3},
+}
+
+
+def normalize_manifest_item(raw: dict[str, Any]) -> dict[str, Any]:
+    """Normalize a garment record from the manifest CSV or database into engine format."""
+    item_id = str(raw.get("id") or raw.get("filename") or raw.get("piece_id") or "").strip()
+    piece_id = str(raw.get("piece_id") or raw.get("sub_category") or raw.get("category") or "").strip().lower()
+
+    meta = PIECE_ID_METADATA.get(piece_id, {})
+    cat = str(raw.get("category") or raw.get("slot") or meta.get("category") or "top").strip().lower()
+    slot = str(raw.get("slot") or meta.get("slot") or CATEGORY_TO_SLOT.get(cat, cat)).strip().lower()
+    role = meta.get("role") or derive_canonical_role(cat, raw.get("subtype") or raw.get("sub_category") or piece_id)
+
+    # Formality
+    f_val = raw.get("formality")
+    if f_val is not None and str(f_val).strip():
+        try:
+            formality = int(f_val)
+        except (ValueError, TypeError):
+            formality = meta.get("formality", 2)
+    else:
+        formality = meta.get("formality", 2)
+
+    # Availability
+    avail_raw = raw.get("is_available")
+    if avail_raw is None:
+        avail_raw = raw.get("available", True)
+    if isinstance(avail_raw, str):
+        is_available = avail_raw.strip().lower() not in ("false", "0", "no", "n")
+    else:
+        is_available = bool(avail_raw)
+
+    # Extra attrs: e.g. "wash=dark,knit_gauge=fine"
+    extra_dict: dict[str, Any] = {}
+    extra_str = raw.get("extra_attrs")
+    if extra_str and isinstance(extra_str, str):
+        for part in extra_str.replace(";", ",").split(","):
+            if "=" in part:
+                k, v = part.split("=", 1)
+                extra_dict[k.strip().lower()] = v.strip().lower()
+
+    # Colors
+    colors_raw = raw.get("colors") or raw.get("color_tags") or []
+    if isinstance(colors_raw, str):
+        colors = [c.strip().lower() for c in colors_raw.replace("|", ",").split(",") if c.strip()]
+    elif isinstance(colors_raw, (list, tuple, set)):
+        colors = [str(c).strip().lower() for c in colors_raw if c]
+    else:
+        colors = []
+    primary_color = str(raw.get("color") or raw.get("primary_color") or (colors[0] if colors else "#000000"))
+
+    # Vibes
+    vibes_raw = raw.get("vibes") or raw.get("style_tags") or raw.get("styles") or []
+    if isinstance(vibes_raw, str):
+        vibes = [v.strip().lower() for v in vibes_raw.replace("|", ",").split(",") if v.strip()]
+    elif isinstance(vibes_raw, (list, tuple, set)):
+        vibes = [str(v).strip().lower() for v in vibes_raw if v]
+    else:
+        vibes = []
+
+    res: dict[str, Any] = {
+        "id": item_id,
+        "piece_id": piece_id,
+        "name": raw.get("name") or piece_id,
+        "category": cat,
+        "slot": slot,
+        "role": role,
+        "sub_category": raw.get("subtype") or raw.get("sub_category") or piece_id,
+        "subtype": raw.get("subtype") or raw.get("sub_category") or piece_id,
+        "color": primary_color,
+        "colors": colors,
+        "primary_color": primary_color,
+        "color_tags": colors,
+        "pattern": str(raw.get("pattern") or "solid").strip().lower(),
+        "fabric": str(raw.get("fabric") or "").strip().lower(),
+        "fit": str(raw.get("fit") or "").strip().lower(),
+        "length": str(raw.get("length") or "").strip().lower(),
+        "embellishment": str(raw.get("embellishment") or "none").strip().lower(),
+        "vibes": vibes,
+        "style_tags": vibes,
+        "styles": vibes,
+        "style": vibes[0] if vibes else "casual",
+        "formality": formality,
+        "is_available": is_available,
+        "available": is_available,
+        "shoeless_user": raw.get("shoeless_user") in (True, "yes", "true", "True"),
+        "source_type": raw.get("source_type", "wardrobe"),
+    }
+    for k, v in extra_dict.items():
+        if k not in res or not res[k]:
+            res[k] = v
+        res[f"extra_{k}"] = v
+    if "wash" in extra_dict:
+        res["wash"] = extra_dict["wash"]
+    if "knit_gauge" in extra_dict:
+        res["knit_gauge"] = extra_dict["knit_gauge"]
+    if "includes_blouse" in extra_dict:
+        res["includes_blouse"] = extra_dict["includes_blouse"] not in ("false", "0", "no")
+
+    return res
+
 
 def derive_canonical_role(category: str, sub_category: Optional[str] = None) -> str:
     """Map legacy category and subcategory into canonical piece role."""
     sub_norm = (sub_category or "").strip().lower().replace(" ", "_")
     cat_norm = (category or "top").strip().lower().replace(" ", "_")
     return SUBCATEGORY_TO_ROLE.get(sub_norm) or CATEGORY_TO_ROLE.get(cat_norm, PieceRole.TOP)
+
 
 # Formality by subcategory (0=casual, 1=smart casual, 2=formal, 3=festive/wedding)
 SUBCATEGORY_FORMALITY: dict[str, int] = {

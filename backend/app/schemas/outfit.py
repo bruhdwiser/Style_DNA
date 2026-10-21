@@ -122,6 +122,7 @@ class OutfitResponse(BaseModel):
     is_saved: bool = False
     is_below_threshold: bool = False
     quality_warning: Optional[str] = None
+    vibe_coverage: Optional[str] = Field(default=None, description="Wardrobe coverage for requested vibe: high, moderate, low, none")
     tags: list[str] = Field(default_factory=list, description="Classification tags for saved looks")
     core_signature: list[tuple[str, str]] = Field(default_factory=list, description="Sorted (slot, item_id) pairs of core garments")
     items: list[OutfitSlotItem] = []
@@ -150,6 +151,7 @@ class GenerateOutfitsResponse(BaseModel):
     missing_slots: list[str] = []
     profile_warning: Optional[str] = None
     quality_warning: Optional[str] = None
+    vibe_coverage: Optional[str] = Field(default=None, description="Wardrobe coverage evaluation for requested vibe")
     budget_status: Optional[str] = None  # "within_budget", "no_products_in_budget", "no_products_found"
     no_products_in_budget: bool = False
     cheapest_alternative: Optional[dict[str, Any]] = None

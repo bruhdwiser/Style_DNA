@@ -19,6 +19,7 @@ from app.styling.rules import (
     season_match,
     evaluate_pairing_strength,
 )
+from app.styling.skeletons import CORE_SLOTS
 
 
 def _coerce_item(item: Any, key: str, default: Any = None) -> Any:
@@ -207,15 +208,13 @@ def layering_feature_score(candidate: Any) -> float:
     return 1.0 if layered else 0.5
 
 
-VIBE_KEYWORDS: dict[str, set[str]] = {
-    "minimal": {"minimal", "clean", "simple", "classic", "monochrome"},
-    "classic": {"classic", "tailored", "smart_casual", "workwear", "structured"},
-    "streetwear": {"streetwear", "casual", "oversized", "hoodie", "sneakers", "sporty"},
-    "elegant": {"elegant", "formal", "chic", "luxurious", "graceful", "evening"},
-    "bohemian": {"boho", "bohemian", "floral", "relaxed", "artisanal"},
-    "romantic": {"romantic", "date", "soft", "elegant", "floral", "lace"},
-    "festive": {"festive", "traditional", "ethnic", "regal", "party"},
-    "casual": {"casual", "relaxed", "comfort", "daily"},
+PARTIAL_VIBE_SYNONYMS: dict[str, set[str]] = {
+    "minimal": {"clean", "simple", "monochrome"},
+    "classic": {"tailored", "smart_casual", "workwear", "structured"},
+    "streetwear": {"oversized", "hoodie", "skate", "urban"},
+    "elegant": {"chic", "luxurious", "graceful", "evening"},
+    "bohemian": {"boho", "artisanal"},
+    "romantic": {"soft", "lace"},
 }
 
 
@@ -224,7 +223,12 @@ def vibe_feature_score(
     vibe: str | None = None,
     vibes: list[str] | None = None,
 ) -> float:
-    """Score multi-label aesthetic vibe affinity across outfit pieces."""
+    """Score multi-label aesthetic vibe affinity across outfit pieces.
+
+    Direct matches to selected vibes give 1.0; narrow aesthetic synonyms give 0.45;
+    unmatched items give 0.0. Core garments establish 75% of the aesthetic statement,
+    while peripheral pieces provide complementary polish (25%).
+    """
     target_vibes: list[str] = []
     if vibe and str(vibe).strip():
         target_vibes.append(str(vibe).strip().lower())
@@ -235,35 +239,57 @@ def vibe_feature_score(
                 target_vibes.append(v_clean)
 
     if not target_vibes:
-        return 0.85
+        return 0.80
 
-    items = _extract_items(candidate)
-    if not items:
-        return 0.50
+    if isinstance(candidate, dict):
+        slots = _coerce_item(candidate, "slots", candidate)
+    else:
+        slots = getattr(candidate, "slots", {})
 
-    keywords: set[str] = set()
-    for tv in target_vibes:
-        keywords.add(tv)
-        if tv in VIBE_KEYWORDS:
-            keywords.update(VIBE_KEYWORDS[tv])
+    if not isinstance(slots, dict) or not slots:
+        items = _extract_items(candidate)
+        if not items:
+            return 0.50
+        slots = {f"slot_{i}": it for i, it in enumerate(items)}
 
-    matches = 0
-    for item in items:
-        item_tags: set[str] = set()
-        for key in ("style", "styles", "style_tags", "vibe", "vibes"):
+    core_scores: list[float] = []
+    peri_scores: list[float] = []
+
+    for slot, item in slots.items():
+        item_vibes: set[str] = set()
+        for key in ("vibes", "vibe", "style_tags", "styles", "style"):
             val = _coerce_item(item, key, None)
             if isinstance(val, (list, tuple, set)):
-                item_tags.update(str(v).strip().lower() for v in val if v)
+                item_vibes.update(str(v).strip().lower() for v in val if v)
             elif isinstance(val, str) and val.strip():
-                item_tags.add(val.strip().lower())
-        sub = str(_coerce_item(item, "sub_category", "") or "").lower()
-        if sub:
-            item_tags.add(sub)
-        if item_tags & keywords:
-            matches += 1
+                item_vibes.update(str(v).strip().lower() for v in val.replace("|", ",").split(",") if v.strip())
 
-    ratio = matches / max(1, len(items))
-    return round(0.40 + 0.60 * ratio, 3)
+        best_match = 0.0
+        for tv in target_vibes:
+            if tv in item_vibes:
+                best_match = 1.0
+                break
+            partials = PARTIAL_VIBE_SYNONYMS.get(tv, set())
+            if item_vibes & partials:
+                best_match = max(best_match, 0.45)
+
+        if slot in CORE_SLOTS:
+            core_scores.append(best_match)
+        else:
+            peri_scores.append(best_match)
+
+    if core_scores and peri_scores:
+        core_avg = sum(core_scores) / len(core_scores)
+        peri_avg = sum(peri_scores) / len(peri_scores)
+        score = 0.75 * core_avg + 0.25 * peri_avg
+    elif core_scores:
+        score = sum(core_scores) / len(core_scores)
+    elif peri_scores:
+        score = sum(peri_scores) / len(peri_scores)
+    else:
+        score = 0.50
+
+    return round(score, 3)
 
 
 def formality_fit_score(candidate: Any) -> float:
@@ -386,7 +412,23 @@ def score_outfit(
         attrs=attrs,
         seed=seed,
     )
-    weights = OUTFIT_RULE_CONFIG["weights"]
+    has_target_vibe = bool((vibe and str(vibe).strip()) or (vibes and any(str(v).strip() for v in vibes)))
+    if has_target_vibe:
+        weights = {
+            "occasion_fit": 0.18,
+            "vibe_affinity": 0.20,
+            "pairing_strength": 0.16,
+            "color_harmony": 0.14,
+            "style_coherence": 0.12,
+            "formality_fit": 0.08,
+            "season_fit": 0.06,
+            "freshness": 0.03,
+            "style_dna": 0.02,
+            "layering": 0.01,
+        }
+    else:
+        weights = OUTFIT_RULE_CONFIG["weights"]
+
     numerator = sum(
         weights.get(name, 0.0) * value for name, value in values.items()
     )

@@ -42,7 +42,51 @@ NAMED_COLORS: dict[str, tuple[float, float, float]] = {
     "lavender": (0.75, 0.65, 0.85),
     "silver": (0.75, 0.75, 0.75),
     "gold": (0.85, 0.75, 0.3),
+    "nude": (0.89, 0.74, 0.60),
+    "champagne": (0.97, 0.91, 0.81),
+    "pastel": (0.94, 0.92, 0.88),
+    "pastel_pink": (1.0, 0.82, 0.86),
+    "pastel pink": (1.0, 0.82, 0.86),
+    "rust": (0.72, 0.25, 0.05),
+    "camel": (0.76, 0.60, 0.42),
+    "khaki": (0.76, 0.69, 0.57),
+    "emerald": (0.15, 0.55, 0.35),
+    "charcoal": (0.21, 0.27, 0.31),
+    "wine": (0.45, 0.18, 0.22),
+    "taupe": (0.55, 0.52, 0.54),
+    "terracotta": (0.80, 0.36, 0.27),
 }
+
+FASHION_NEUTRALS: frozenset[str] = frozenset({
+    "black",
+    "white",
+    "gray",
+    "grey",
+    "charcoal",
+    "silver",
+    "cream",
+    "ivory",
+    "beige",
+    "tan",
+    "nude",
+    "champagne",
+    "taupe",
+    "camel",
+    "khaki",
+    "navy",
+    "dark blue",
+    "brown",
+    "gold",
+    "pastel",
+})
+
+
+def _extract_color_name(value: Any) -> str:
+    """Normalize a color string into a clean lowercase name if applicable."""
+    if isinstance(value, str):
+        c = value.strip().lower().replace("-", "_").lstrip("#")
+        return c
+    return ""
 
 
 def _normalize_hex(value: Any) -> tuple[float, float, float]:
@@ -57,6 +101,10 @@ def _normalize_hex(value: Any) -> tuple[float, float, float]:
         cleaned = value.strip().lower()
         if cleaned in NAMED_COLORS:
             return NAMED_COLORS[cleaned]
+
+        cleaned_norm = cleaned.replace("-", "_")
+        if cleaned_norm in NAMED_COLORS:
+            return NAMED_COLORS[cleaned_norm]
 
         hex_value = cleaned.lstrip("#")
         if len(hex_value) == 3:
@@ -115,20 +163,51 @@ def color_distance_lab(
 
 
 def harmony_score(color_a: Any, color_b: Any) -> float:
-    """Return a 0..1 color harmony score based on Lab distance and HCL angle.
+    """Return a 0..1 color harmony score grounded in fashion color theory.
 
-    Higher values mean the two colours look more cohesive together.
+    Fashion harmony rules:
+    1. Neutral + Neutral: Inherently classic and sophisticated (0.94; 1.0 if identical).
+    2. Neutral + Accent: Neutrals naturally ground any accent color (0.88).
+    3. Accent + Accent: Evaluated via HCL hue wheel (analogous, complementary, triadic).
     """
+    name_a = _extract_color_name(color_a)
+    name_b = _extract_color_name(color_b)
+
+    is_neut_a = name_a in FASHION_NEUTRALS
+    is_neut_b = name_b in FASHION_NEUTRALS
+
+    # 1. Neutral + Neutral
+    if is_neut_a and is_neut_b:
+        if name_a == name_b:
+            return 1.0
+        return 0.94
+
+    # 2. Neutral + Accent
+    if is_neut_a or is_neut_b:
+        return 0.88
+
+    # 3. Accent + Accent
     lab_a = _rgb_to_lab(_normalize_hex(color_a))
     lab_b = _rgb_to_lab(_normalize_hex(color_b))
-    delta_e = color_distance_lab(lab_a, lab_b)
     hcl_a = _lab_to_hcl(lab_a)
     hcl_b = _lab_to_hcl(lab_b)
     hue_delta = abs((hcl_a[0] - hcl_b[0]) % 360.0)
     hue_delta = min(hue_delta, 360.0 - hue_delta)
-    hue_similarity = 1.0 - (hue_delta / 180.0)
-    lab_similarity = 1.0 - min(delta_e / 100.0, 1.0)
-    score = 0.7 * lab_similarity + 0.3 * hue_similarity
+
+    # Analogous (<= 45 deg)
+    if hue_delta <= 45.0:
+        score = 0.92 - (hue_delta / 45.0) * 0.07
+    # Complementary (150 - 210 deg)
+    elif 150.0 <= hue_delta <= 210.0:
+        comp_dist = abs(hue_delta - 180.0)
+        score = 0.90 - (comp_dist / 30.0) * 0.08
+    # Triadic (105 - 135 deg)
+    elif 105.0 <= hue_delta <= 135.0:
+        tri_dist = abs(hue_delta - 120.0)
+        score = 0.84 - (tri_dist / 15.0) * 0.06
+    else:
+        score = max(0.40, 0.75 - (hue_delta / 180.0) * 0.35)
+
     return round(max(0.0, min(1.0, score)), 3)
 
 

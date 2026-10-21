@@ -1,0 +1,53 @@
+filename,piece_id,name,subtype,colors,pattern,fabric,fit,length,embellishment,vibes,formality,extra_attrs,tag_mode,omit_fields,available,shoeless_user,test_intent
+tshirt_01.jpg,tshirt,White solid boxy tee,,white,solid,cotton,boxy,regular,none,minimal|classic,2,,full,,true,yes,Neutral base; casual/college/lounge core; work stretch (solid)
+tshirt_02.jpg,tshirt,Black oversized graphic tee,,black,graphic,cotton,oversized,regular,none,streetwear,2,,full,,true,,Streetwear; loud-pattern rule; work stretch must FAIL (not solid)
+tshirt_03.jpg,tshirt,Navy-white Breton striped tee,,navy|white,stripes,cotton,fitted,regular,none,classic,2,,legacy_only,,false,,Legacy-only row (normalization) + UNAVAILABLE (must never appear)
+tank_01.jpg,tank,Black fine-rib tank,,black,solid,rib,fitted,regular,none,minimal,2,,partial,fabric,true,,Missing fabric: date_night stretch must NOT be granted; core uses still work
+tank_02.jpg,tank,Champagne satin cami,cami,champagne,solid,satin,fitted,regular,none,elegant|romantic,3,,full,,true,,Satin cami: date_night/party stretch condition holds
+crop_top_01.jpg,crop_top,Blush pink puff-sleeve crop top,,blush,solid,cotton,fitted,cropped,light,romantic,2,,full,,true,,Romantic; casual/college/party/date core
+crop_top_02.jpg,crop_top,Black embroidered halter crop top,,black,embroidered,crepe,fitted,cropped,light,bohemian|elegant,3,,full,,true,,Role override: fusion blouse with saree / lehenga skirt
+shirt_formal_01.jpg,shirt_formal,White poplin button-down shirt,,white,solid,poplin,regular,regular,none,classic|minimal,3,,full,,true,,Work/college core; layering
+shirt_formal_02.jpg,shirt_formal,Emerald satin shirt,satin,emerald,solid,satin,regular,regular,none,elegant,3,,full,,true,,Date_night stretch (satin); fusion blouse stretch
+sweater_01.jpg,sweater,Beige fine-knit sweater,,beige,solid,knit,regular,regular,none,minimal|classic,3,knit_gauge=fine,full,,true,,Blazer-over-fine-sweater rule; warmth 3 (summer gate)
+hoodie_01.jpg,hoodie,Grey oversized hoodie,,grey,solid,fleece,oversized,regular,none,streetwear,1,,full,,true,,Layer-over-hoodie must be excluded; warmth 3
+kurti_01.jpg,kurti,Off-white solid linen kurti,,ivory,solid,linen,straight,knee,none,minimal,3,,full,,true,yes,E-SEP / E-FUSION; never sneakers/loafers with E-SEP
+kurti_02.jpg,kurti,Rust block-print cotton kurti,,rust|indigo,block_print,cotton,straight,regular,light,bohemian,2,,full,,true,,Loud pattern: clashes with printed palazzo_02 (pattern rule)
+kurti_03.jpg,kurti,Pastel chikankari kurti,,pastel,embroidered,cotton,straight,regular,light,classic|romantic,3,,legacy_only,,true,,Legacy-only row
+blouse_01.jpg,blouse,Maroon silk saree blouse,,maroon,solid,silk,fitted,cropped,light,classic,4,,full,,true,,Required partner for saree_01
+jeans_01.jpg,jeans,Dark-wash straight jeans,,indigo,solid,denim,straight,ankle,none,classic|minimal,2,wash=dark,full,,true,yes,Work stretch (dark wash) holds; E-FUSION with kurti
+jeans_02.jpg,jeans,Light-wash baggy wide-leg jeans,,light_blue,solid,denim,baggy,full,none,streetwear,2,wash=light,full,,true,,Work stretch must FAIL (light wash)
+jeans_03.jpg,jeans,Medium-wash flared jeans,,blue,solid,denim,flared,full,none,bohemian,2,,partial,fit|wash,true,,Missing fit/wash: conditional stretch must not be granted
+trousers_casual_01.jpg,trousers_casual,Olive cargo joggers,cargo,olive,solid,cotton,relaxed,ankle,none,streetwear,1,,full,,true,,Lounge/college; hoodie pairing
+skirt_01.jpg,skirt,Pastel floral midi skirt,,pastel_pink,floral,chiffon,a_line,midi,light,romantic|bohemian,3,,full,,true,yes,Work stretch (midi) but loud pattern; date/party core
+skirt_02.jpg,skirt,Champagne satin slip midi skirt,,champagne,solid,satin,regular,midi,none,elegant|minimal,3,,full,,true,,Date_night elegant; work stretch (midi)
+shorts_01.jpg,shorts,Beige linen Bermuda shorts,,beige,solid,linen,relaxed,knee,none,minimal,2,,partial,pattern|fabric,true,,Missing pattern/fabric; party stretch must not be granted
+palazzo_01.jpg,palazzo,Neutral linen palazzo,,beige,solid,linen,wide_leg,full,none,minimal|classic,2,,legacy_only,,true,yes,Legacy-only row; works with western AND ethnic tops
+palazzo_02.jpg,palazzo,Indigo block-print rayon palazzo,,indigo,block_print,rayon,wide_leg,full,light,bohemian,2,,full,,true,,Pattern clash with kurti_02; party stretch (embellished/light)
+salwar_01.jpg,salwar,Tan cotton dhoti salwar,dhoti,tan,solid,cotton,tapered,ankle,none,classic|minimal,3,,full,,true,,E-SEP; salwar with western tops must be forbidden
+lehenga_skirt_01.jpg,lehenga_skirt,Mustard bandhani mirror-work lehenga skirt,,mustard|pink,bandhani,cotton,flared,full,heavy,bohemian|romantic,5,,full,,true,,E-LEH with crop_top_02 / blouse_01
+midi_dress_01.jpg,midi_dress,Floral wrap midi dress,wrap,pastel|green,floral,chiffon,fit_and_flare,midi,light,romantic,3,,full,,true,yes,Date/casual core; romantic
+midi_dress_02.jpg,midi_dress,Solid cotton shirt dress,shirt_dress,olive,solid,cotton,regular,midi,none,classic|minimal,3,,legacy_only,,true,,Legacy-only row; college stretch (shirt_dress)
+mini_dress_01.jpg,mini_dress,Black structured shift dress,,black,solid,crepe,fitted,mini,none,classic|elegant|minimal,3,,full,,true,,Party/date core; no blazer in wardrobe => gap
+maxi_dress_01.jpg,maxi_dress,Tiered paisley rayon maxi dress,,rust|teal,paisley,rayon,a_line,maxi,light,bohemian,2,,full,,true,,Casual/college core; date stretch (bohemian vibe)
+jumpsuit_01.jpg,jumpsuit,Navy wide-leg crepe jumpsuit,,navy,solid,crepe,wide_leg,full,none,elegant|minimal,3,,full,,true,,Work/date/party core; blazer gap
+coord_set_01.jpg,coord_set,Beige linen co-ord set,,beige,solid,linen,relaxed,regular,none,minimal,2,,full,,true,,W-SET core
+kurti_set_01.jpg,kurti_set,Pastel Chanderi kurti set with dupatta,,pastel_blue,solid,chanderi,straight,regular,light,classic|romantic,3,,full,,true,yes,E-SET-LIGHT; never sneakers/loafers
+kurti_set_02.jpg,kurti_set,Jewel-tone velvet kurti set,,emerald|gold,solid,velvet,straight,regular,heavy,elegant,4,,full,,true,,Wedding stretch (heavy embellishment)
+anarkali_01.jpg,anarkali,Pastel floral georgette anarkali,,pastel,floral,georgette,a_line,full,light,romantic,5,,full,,true,,E-SET-HEAVY: jutti/heels only
+lehenga_set_01.jpg,lehenga_set,Red zari brocade lehenga set,,red|gold,brocade,brocade,flared,full,heavy,classic|elegant,5,,full,,true,,E-SET-HEAVY; wedding core
+saree_01.jpg,saree,Banarasi silk saree (blouse NOT included),,wine|gold,brocade,silk,regular,full,heavy,classic|elegant,5,includes_blouse=false,legacy_only,,true,,MUST pair with blouse_01 (or fusion blouse); NEVER sneakers/loafers
+saree_02.jpg,saree,Handloom cotton saree with stitched blouse,,teal|ivory,solid,cotton,regular,full,light,classic|minimal,3,includes_blouse=true,full,,true,,Complete on its own; work/festive core
+jacket_01.jpg,jacket,Classic denim jacket,denim,blue,solid,denim,regular,regular,none,classic|streetwear,2,,legacy_only,,true,,Legacy-only; E-FUSION denim layer
+jacket_02.jpg,jacket,Black faux-leather biker jacket,biker,black,solid,faux_leather,fitted,cropped,none,streetwear|elegant,3,,full,,false,,UNAVAILABLE (must never appear)
+cardigan_01.jpg,cardigan,Cream fine-knit cardigan,,cream,solid,knit,regular,regular,none,romantic|classic,2,knit_gauge=fine,full,,true,yes,Layer over tee/tank/shirt; NOT over sweater/hoodie
+cardigan_02.jpg,cardigan,Grey chunky oversized cardigan,,grey,solid,knit,oversized,longline,none,streetwear|bohemian,2,knit_gauge=chunky,full,,true,,Lounge/college; warmth 2
+shrug_01.jpg,shrug,Cream crochet shrug,,cream,solid,crochet,relaxed,cropped,light,bohemian|romantic,2,,full,,true,,Party/casual core
+ethnic_jacket_01.jpg,ethnic_jacket,Embroidered ethnic jacket,,navy|gold,embroidered,silk,regular,regular,light,classic|bohemian,4,,full,,true,,E-LEH / E-FUSION / E-SEP layer
+sneakers_01.jpg,sneakers,White low-top sneakers,,white,solid,canvas,regular,,none,minimal|classic,2,,legacy_only,,true,,Legacy-only; forbidden with saree/sets/E-SEP
+sneakers_02.jpg,sneakers,Chunky colour-block sneakers,chunky,white|grey|blue,colour_block,leather,regular,,none,streetwear,2,,full,,true,,Streetwear; party/date stretch vibe-conditional
+chappals_01.jpg,chappals,Tan braided Kolhapuri chappals,kolhapuri,tan,solid,leather,regular,,none,classic|bohemian,2,style=sleek,legacy_only,,true,,Legacy-only; saree/E-SEP/casual core
+chappals_02.jpg,chappals,Gold metallic embellished flats,,gold,solid,leather,regular,,light,elegant|romantic,3,style=metallic,full,,true,,Date_night/wedding stretch; saree-safe
+mules_01.jpg,mules,Black square-toe mules,,black,solid,leather,regular,,none,minimal|elegant,3,,full,,true,,Casual/work/date core
+heels_01.jpg,heels,Nude block-heel pumps,block,nude,solid,leather,regular,,none,classic|elegant,4,,full,,true,,Only heels: wedding/party/work; tests shortfall when worn recently
+jutti_01.jpg,jutti,Gold zari embroidered jutti,,gold,embroidered,leather,regular,,heavy,classic|elegant,5,,full,,true,,Saree/sets/wedding finish
+jutti_02.jpg,jutti,Plain tan mule-jutti,,tan,solid,leather,regular,,none,minimal,2,,full,,true,,Casual/college core; E-FUSION/E-SEP

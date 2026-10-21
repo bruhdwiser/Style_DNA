@@ -173,12 +173,20 @@ def _mmr_diversify(
             )
             core_penalty = CORE_REPEAT_PENALTY if core_overlap else 0.0
 
+            same_skeleton_count = sum(
+                1
+                for _, chosen_candidate in selected
+                if candidate.skeleton == chosen_candidate.skeleton
+            )
+            skeleton_penalty = 0.08 * same_skeleton_count
+
             # Combined diversity penalty
             diversity_penalty = (
                 (0.20 * max_sim)
                 + (0.35 * max_sil_sim)
                 + (0.30 * exact_sil_count)
                 + core_penalty
+                + skeleton_penalty
             )
             jitter = (
                 rng.uniform(-0.015, 0.015)
@@ -208,7 +216,8 @@ def generate_outfits(
     affinities: dict[str, Any] | None = None,
     seed: int | None = 0,
     limit: int = 8,
-    max_candidates: int = 5000,
+    max_candidates: int = 25000,
+    min_score: float | None = None,
     is_shuffle: bool = False,
     exclude_core_signatures: set[frozenset[tuple[str, str]]] | None = None,
 ) -> list[OutfitCandidate]:
@@ -217,6 +226,8 @@ def generate_outfits(
     This is the main entry point. Hard filters ensure outfit validity and occasion
     rules strictly dominate. If affinities are provided, a bounded Style DNA
     adjustment is applied to order candidates predictably according to user feedback.
+    When min_score is provided, the complete candidate pool is evaluated against the
+    threshold before truncation or diversification.
     """
     from app.styling.learning import compute_outfit_affinity_adjustment
 
@@ -248,6 +259,13 @@ def generate_outfits(
 
     if not ranked:
         return []
+
+    # If min_score is specified, evaluate complete candidate pool before truncation
+    if min_score is not None:
+        ranked = [item for item in ranked if item[0] >= min_score]
+        if not ranked:
+            return []
+
     ranked.sort(
         key=lambda item: (
             round(-item[0], 4),
@@ -276,7 +294,7 @@ def generate_ranked_outfits(
     attrs: dict[str, Any] | None = None,
     seed: int | None = 0,
     limit: int = 8,
-    max_candidates: int = 5000,
+    max_candidates: int = 25000,
 ) -> list[tuple[float, OutfitCandidate]]:
     """Return ranked candidates, preserving score ordering before diversification."""
     skeletons = generate_candidates(items, max_candidates=max_candidates)

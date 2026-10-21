@@ -23,6 +23,8 @@ def explain_outfit(
     *,
     occasion: Any,
     season: Any,
+    vibe: str | None = None,
+    vibes: list[str] | None = None,
     body_shape: str | None = None,
     attrs: dict[str, Any] | None = None,
     affinities: dict[str, Any] | None = None,
@@ -38,6 +40,8 @@ def explain_outfit(
         candidate,
         occasion=occasion,
         season=season,
+        vibe=vibe,
+        vibes=vibes,
         body_shape=body_shape,
         attrs=attrs,
     )
@@ -64,13 +68,28 @@ def explain_outfit(
         if item_name not in (None, ""):
             item_names.append(str(item_name))
 
-    # Filter out body_fit and legacy duplicates so explanations ground in active features
+    has_target_vibe = bool((vibe and str(vibe).strip()) or (vibes and any(str(v).strip() for v in vibes)))
+    target_vibe_label = (
+        str(vibe).strip().lower()
+        if vibe and str(vibe).strip()
+        else (str(vibes[0]).strip().lower() if vibes and vibes[0] else None)
+    )
+
+    # Filter out body_fit and legacy duplicates; exclude vibe_affinity when no vibe was requested
+    excluded_names = {"body_fit", "color", "style", "occasion", "season", "novelty"}
+    if not has_target_vibe:
+        excluded_names.add("vibe_affinity")
+
     filtered_scores = [
         (name, value) for name, value in ordered
-        if name not in ("body_fit", "color", "style", "occasion", "season", "novelty")
+        if name not in excluded_names
     ]
-    # Fallback to ordered if filtered is empty
-    explanation_scores = filtered_scores if filtered_scores else ordered
+    if has_target_vibe and "vibe_affinity" in scores:
+        vibe_val = scores["vibe_affinity"]
+        other_scores = [item for item in filtered_scores if item[0] != "vibe_affinity"]
+        explanation_scores = [("vibe_affinity", vibe_val)] + other_scores
+    else:
+        explanation_scores = filtered_scores if filtered_scores else ordered
 
     if explanation_scores:
         for name, value in explanation_scores[:4]:
@@ -84,30 +103,51 @@ def explain_outfit(
                     if _coerce_item(item, "color", None) is not None
                 ]
                 colors_text = ", ".join(colors) if colors else "used colors"
-                reasons.append(
-                    f"Color harmony is {value:.2f} across the palette "
-                    f"({colors_text})."
-                )
+                if value >= 0.90:
+                    reasons.append(
+                        f"Color harmony is {value:.2f} with a cohesive, polished palette "
+                        f"({colors_text})."
+                    )
+                else:
+                    reasons.append(
+                        f"Color harmony is {value:.2f} across the palette "
+                        f"({colors_text})."
+                    )
             elif name in ("occasion_fit", "occasion"):
                 reasons.append(
-                    f"Occasion fit is {value:.2f} for the {occasion} brief."
+                    f"Occasion fit is {value:.2f} meeting the dress code for {occasion}."
                 )
             elif name in ("season_fit", "season"):
                 reasons.append(
                     f"Season fit is {value:.2f} for {season} styling."
                 )
             elif name == "pairing_strength":
+                skel_name = getattr(candidate, "skeleton", "outfit").replace("_", " ")
                 reasons.append(
-                    f"Pairing strength is {value:.2f} across compatible garment categories."
+                    f"Pairing strength is {value:.2f} across compatible {skel_name} pieces."
                 )
             elif name in ("style_coherence", "style"):
                 reasons.append(
                     f"Style coherence is {value:.2f} aligning pieces within the aesthetic."
                 )
             elif name == "vibe_affinity":
-                reasons.append(
-                    f"Vibe affinity is {value:.2f} matching the desired aesthetic."
-                )
+                if target_vibe_label:
+                    if value >= 0.70:
+                        reasons.append(
+                            f"Strong {target_vibe_label} match ({value:.2f}) aligning with your requested aesthetic."
+                        )
+                    elif value >= 0.35:
+                        reasons.append(
+                            f"Moderate {target_vibe_label} affinity ({value:.2f}) balancing {occasion} styling."
+                        )
+                    else:
+                        reasons.append(
+                            f"Wardrobe has limited {target_vibe_label} options for {occasion}; prioritized occasion fit and structural pairing."
+                        )
+                else:
+                    reasons.append(
+                        f"Vibe affinity is {value:.2f} matching the desired aesthetic."
+                    )
             elif name == "formality_fit":
                 reasons.append(
                     f"Formality fit is {value:.2f} within a balanced dress code spread."

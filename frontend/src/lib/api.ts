@@ -597,6 +597,7 @@ export interface OutfitResponse {
   created_at?: string | null
   is_below_threshold?: boolean
   quality_warning?: string | null
+  vibe_coverage?: string | null
   core_signature?: [string, string][]
 }
 
@@ -625,6 +626,7 @@ export interface GenerateOutfitsResponse {
   no_products_in_budget?: boolean
   cheapest_alternative?: CatalogProductSuggestion | null
   quality_warning?: string | null
+  vibe_coverage?: string | null
 }
 
 export interface SavedOutfitsListResponse {
