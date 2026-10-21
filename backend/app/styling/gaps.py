@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.styling.generator import generate_outfits
+from app.styling.rules import MIN_OUTFIT_SCORE_GAP_ANALYSIS
 
 DEFAULT_ARCHETYPES: list[dict[str, Any]] = [
     {

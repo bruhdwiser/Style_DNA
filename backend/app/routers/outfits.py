@@ -41,7 +41,11 @@ from ..styling.features import feature_scores, score_outfit
 from ..styling.gaps import rank_gaps
 from ..styling.generator import generate_outfits
 from ..styling.learning import calculate_affinities, compute_outfit_affinity_adjustment
-from ..styling.taxonomy import calculate_slot_coverage
+from ..styling.taxonomy import (
+    calculate_slot_coverage,
+    classify_outfit_core,
+    canonical_occasion,
+)
 from ..styling.skeletons import CORE_SLOTS, OutfitCandidate, generate_candidates
 from ..styling.rules import hard_filter_candidate
 from .gaps import (
@@ -406,7 +410,7 @@ async def generate_outfit_recommendations(
     except Exception as exc:
         logger.debug(f"Could not load events for Style DNA affinities: {exc}")
 
-    occasion = body.occasion.strip().lower()
+    occasion = canonical_occasion(body.occasion)
     season = body.season.strip().lower()
 
     # Unpack exclude_core_signatures if provided
@@ -427,6 +431,8 @@ async def generate_outfit_recommendations(
             engine_items,
             occasion=occasion,
             season=season,
+            vibe=body.vibe,
+            vibes=body.vibes,
             body_shape=body_shape,
             attrs=attrs,
             affinities=affinities,
@@ -441,8 +447,26 @@ async def generate_outfit_recommendations(
     below_threshold_wardrobe: list[tuple[float, OutfitCandidate, dict[str, float], list[str]]] = []
 
     for cand in wardrobe_candidates:
-        scores = feature_scores(cand, occasion=occasion, season=season, body_shape=body_shape, attrs=attrs)
-        base_score = float(score_outfit(cand, occasion=occasion, season=season, body_shape=body_shape, attrs=attrs))
+        scores = feature_scores(
+            cand,
+            occasion=occasion,
+            season=season,
+            vibe=body.vibe,
+            vibes=body.vibes,
+            body_shape=body_shape,
+            attrs=attrs,
+        )
+        base_score = float(
+            score_outfit(
+                cand,
+                occasion=occasion,
+                season=season,
+                vibe=body.vibe,
+                vibes=body.vibes,
+                body_shape=body_shape,
+                attrs=attrs,
+            )
+        )
         affinity_delta, _ = compute_outfit_affinity_adjustment(cand, affinities) if affinities else (0.0, [])
         total_score = round(max(0.0, min(1.0, base_score + affinity_delta)), 3)
         if affinities and affinities.get("total_events"):
@@ -925,12 +949,27 @@ async def generate_outfit_recommendations(
                 vibe=body.vibe,
             )
 
+        shoes_included = "shoes" in cand.slots
+        formalities: list[int] = []
+        for item in cand.slots.values():
+            val = item.get("formality") if isinstance(item, dict) else getattr(item, "formality", 1)
+            try:
+                formalities.append(int(val) if val is not None else 1)
+            except (ValueError, TypeError):
+                formalities.append(1)
+        formality_spread = (max(formalities) - min(formalities)) if len(formalities) >= 2 else 0
+
         persisted_outfits.append(
             OutfitResponse(
                 id=outfit_id,
                 user_id=user.id,
                 occasion=occasion,
                 vibe=body.vibe,
+                vibes=body.vibes if body.vibes else ([body.vibe] if body.vibe else None),
+                season=season,
+                shoes_included=shoes_included,
+                formality_spread=formality_spread,
+                core_type=classify_outfit_core(cand),
                 skeleton=cand.skeleton,
                 score=round(float(total_score), 3),
                 component_scores={k: round(float(v), 3) for k, v in scores.items()},

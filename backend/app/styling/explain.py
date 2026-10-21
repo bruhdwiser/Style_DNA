@@ -64,15 +64,20 @@ def explain_outfit(
         if item_name not in (None, ""):
             item_names.append(str(item_name))
 
-    if ordered:
-        for name, value in ordered[:3]:
+    # Filter out body_fit and legacy duplicates so explanations ground in active features
+    filtered_scores = [
+        (name, value) for name, value in ordered
+        if name not in ("body_fit", "color", "style", "occasion", "season", "novelty")
+    ]
+    # Fallback to ordered if filtered is empty
+    explanation_scores = filtered_scores if filtered_scores else ordered
+
+    if explanation_scores:
+        for name, value in explanation_scores[:4]:
             label = name.replace("_", " ").title()
             if name == "body_fit":
-                reasons.append(
-                    f"Body-fit scoring is {value:.2f} for the "
-                    f"{body_shape or 'current'} silhouette profile."
-                )
-            elif name == "color":
+                continue  # Decoupled from outfit explanations
+            elif name in ("color_harmony", "color"):
                 colors = [
                     str(_coerce_item(item, "color", "item"))
                     for item in slots.values()
@@ -83,28 +88,41 @@ def explain_outfit(
                     f"Color harmony is {value:.2f} across the palette "
                     f"({colors_text})."
                 )
-            elif name == "occasion":
+            elif name in ("occasion_fit", "occasion"):
                 reasons.append(
                     f"Occasion fit is {value:.2f} for the {occasion} brief."
                 )
-            elif name == "season":
+            elif name in ("season_fit", "season"):
                 reasons.append(
                     f"Season fit is {value:.2f} for {season} styling."
                 )
+            elif name == "pairing_strength":
+                reasons.append(
+                    f"Pairing strength is {value:.2f} across compatible garment categories."
+                )
+            elif name in ("style_coherence", "style"):
+                reasons.append(
+                    f"Style coherence is {value:.2f} aligning pieces within the aesthetic."
+                )
+            elif name == "vibe_affinity":
+                reasons.append(
+                    f"Vibe affinity is {value:.2f} matching the desired aesthetic."
+                )
+            elif name == "formality_fit":
+                reasons.append(
+                    f"Formality fit is {value:.2f} within a balanced dress code spread."
+                )
             elif name == "layering":
                 reasons.append(
-                    f"Layering adds {value:.2f} polish through the selected "
-                    f"layer pieces."
+                    f"Layering adds {value:.2f} polish through the selected layer piece."
                 )
-            elif name == "novelty":
+            elif name in ("freshness", "novelty"):
                 reasons.append(
-                    f"Novelty is {value:.2f}, which keeps the outfit "
-                    f"contemporary without breaking the dress code."
+                    f"Freshness is {value:.2f}, keeping the look distinct and contemporary."
                 )
             else:
                 reasons.append(
-                    f"{label} contributes {value:.2f} to the overall "
-                    f"recommendation."
+                    f"{label} contributes {value:.2f} to the overall recommendation."
                 )
 
     # Pad to at least 3 reasons

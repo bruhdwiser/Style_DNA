@@ -34,19 +34,46 @@ OUTFIT_RULE_CONFIG: dict[str, Any] = {
         "monsoon": {"monsoon", "all_season"},
     },
     "weights": {
-        "body_fit": 0.26,
-        "color": 0.20,
-        "style": 0.16,
-        "occasion": 0.14,
-        "season": 0.12,
-        "layering": 0.06,
-        "novelty": 0.06,
-    },
-    "hard_filter_limits": {
-        "max_bottoms": 1,
-        "lounge_formal_shoes_max": 1,
+        "occasion_fit": 0.18,
+        "pairing_strength": 0.16,
+        "color_harmony": 0.16,
+        "style_coherence": 0.14,
+        "vibe_affinity": 0.10,
+        "formality_fit": 0.08,
+        "season_fit": 0.06,
+        "freshness": 0.06,
+        "style_dna": 0.04,
+        "layering": 0.02,
+        # Legacy aliases
+        "body_fit": 0.00,
+        "color": 0.00,
+        "style": 0.00,
+        "occasion": 0.00,
+        "season": 0.00,
+        "novelty": 0.00,
     },
 }
+
+# Threshold configuration constants
+MIN_OUTFIT_SCORE_RECOMMENDATION: float = 0.55
+MIN_OUTFIT_SCORE_GAP_ANALYSIS: float = 0.65
+MIN_OUTFIT_SCORE_CATALOG_COMPLETION: float = 0.60
+HIGH_CONFIDENCE_THRESHOLD: float = 0.70
+
+LOUD_PATTERNS: frozenset[str] = frozenset({
+    "loud",
+    "bold",
+    "animal_print",
+    "leopard",
+    "zebra",
+    "floral_bold",
+    "plaid_wide",
+    "abstract_bold",
+    "camo",
+    "chevron",
+    "tie_dye",
+    "paisley_bold",
+})
 
 
 def _normalize(value: Any) -> str:
@@ -237,13 +264,152 @@ def no_sneakers_with_ethnic_formal(candidate: Any, occasion: Any) -> bool:
     return True
 
 
+def check_formality_spread(candidate: Any) -> bool:
+    """Ensure candidate outfit does not exceed max allowed formality spread.
+
+    Rule: spread = max(formality) - min(formality) <= 2.
+    If spread >= 3, return False (hard fail / candidate excluded).
+    """
+    formalities: list[int] = []
+    for _, item in _iter_slots(candidate):
+        f = _coerce_item(item, "formality", 1)
+        try:
+            formalities.append(int(f) if f is not None else 1)
+        except (ValueError, TypeError):
+            formalities.append(1)
+    if len(formalities) < 2:
+        return True
+    return (max(formalities) - min(formalities)) <= 2
+
+
+def check_pattern_clash(candidate: Any) -> bool:
+    """Reject outfits combining two or more loud/statement patterns.
+
+    1 loud pattern + solid/subtle is permitted.
+    >= 2 loud patterns is a hard exclusion.
+    """
+    loud_count = 0
+    for _, item in _iter_slots(candidate):
+        pat = _normalize(_coerce_item(item, "pattern", "solid"))
+        intensity = _normalize(_coerce_item(item, "pattern_intensity", ""))
+        if intensity in ("loud", "bold", "high") or pat in LOUD_PATTERNS:
+            loud_count += 1
+            if loud_count >= 2:
+                return False
+    return True
+
+
+def check_pairing_graph(candidate: Any, occasion: Any = None) -> bool:
+    """Verify symmetric pairing constraints and forbidden edges.
+
+    Forbidden edges:
+    - Saree x athletic sneakers / running shoes / flip flops.
+    - Traditional ethnic sets (formality >= 3 or wedding/festive) x athletic sneakers.
+    - High-formality lehengas (formality >= 4 or wedding) x sneakers.
+    - Formal blazers/suits x gym flip-flops.
+    - At most one layer garment.
+    """
+    slots = dict(_iter_slots(candidate))
+    layer_count = sum(
+        1
+        for slot, item in slots.items()
+        if slot == "layer" or _normalize(_coerce_item(item, "category", "")) in {"layer", "outer"}
+    )
+    if layer_count > 1:
+        return False
+
+    occ_norm = _normalize(occasion) if occasion else ""
+
+    shoes = slots.get("shoes")
+    if shoes:
+        shoe_cat = _normalize(_coerce_item(shoes, "category", ""))
+        shoe_sub = _normalize(
+            _coerce_item(shoes, "sub_category", "")
+            or _coerce_item(shoes, "subtype", "")
+            or _coerce_item(shoes, "name", "")
+        )
+        is_sneaker = "sneaker" in shoe_sub or "running" in shoe_sub or "trainer" in shoe_sub
+        is_flip_flop = "flip_flop" in shoe_sub or "thong" in shoe_sub
+
+        for slot, item in slots.items():
+            if slot == "shoes":
+                continue
+            cat = _normalize(_coerce_item(item, "category", ""))
+            sub = _normalize(
+                _coerce_item(item, "sub_category", "")
+                or _coerce_item(item, "subtype", "")
+                or _coerce_item(item, "name", "")
+            )
+            f = int(_coerce_item(item, "formality", 1) or 1)
+
+            # Saree forbidden with sneakers or flip-flops
+            if cat == "saree" or sub == "saree":
+                if is_sneaker or is_flip_flop:
+                    return False
+
+            # Ethnic set with formality >= 3 or wedding/festive forbidden with sneakers
+            if (cat == "ethnic_set" or sub in ("anarkali", "kurta_set", "sharara")) and (
+                f >= 3 or occ_norm in ("wedding", "festive")
+            ):
+                if is_sneaker or is_flip_flop:
+                    return False
+
+            # High formality lehengas (f >= 4 or wedding) forbidden with sneakers
+            if ("lehenga" in sub or "lehenga" in cat) and (f >= 4 or occ_norm == "wedding"):
+                if is_sneaker or is_flip_flop:
+                    return False
+
+            # Formal suit / tuxedo forbidden with flip-flops
+            if f >= 4 and is_flip_flop:
+                return False
+
+    return True
+
+
+def evaluate_pairing_strength(candidate: Any) -> float:
+    """Compute structural pairing strength score in [0.0, 1.0].
+
+    Core pairings: 1.0 (e.g. saree + heels/juttis, top + bottom + clean shoes)
+    Stretch pairings: 0.70 (e.g. blazer + casual sneakers, lehenga skirt + sneakers)
+    Neutral / standard: 0.85
+    Forbidden: 0.0
+    """
+    slots = dict(_iter_slots(candidate))
+    if not slots:
+        return 0.5
+
+    shoes = slots.get("shoes")
+    if not shoes:
+        return 0.80
+
+    shoe_sub = _normalize(
+        _coerce_item(shoes, "sub_category", "") or _coerce_item(shoes, "subtype", "") or ""
+    )
+    is_sneaker = "sneaker" in shoe_sub or "running" in shoe_sub
+
+    for slot, item in slots.items():
+        if slot == "shoes":
+            continue
+        sub = _normalize(
+            _coerce_item(item, "sub_category", "") or _coerce_item(item, "subtype", "") or ""
+        )
+        cat = _normalize(_coerce_item(item, "category", ""))
+        f = int(_coerce_item(item, "formality", 1) or 1)
+        if ("lehenga" in sub or "lehenga" in cat) and f <= 2 and is_sneaker:
+            return 0.70  # Stretch fusion
+        if ("blazer" in sub or "blazer" in cat) and is_sneaker and f <= 3:
+            return 0.75  # Smart casual stretch
+
+    return 0.90
+
+
 def hard_filter_candidate(
     candidate: Any,
     occasion: Any,
     season: Any,
 ) -> bool:
     """Apply hard filters: availability, duplicates, bottom count, season,
-    and occasion compatibility.
+    formality spread, pattern clash, pairing graph, and occasion compatibility.
 
     Returns True if the candidate passes all filters.
     """
@@ -258,6 +424,12 @@ def hard_filter_candidate(
     if duplicate_items(candidate):
         return False
     if not no_two_bottoms(candidate):
+        return False
+    if not check_formality_spread(candidate):
+        return False
+    if not check_pattern_clash(candidate):
+        return False
+    if not check_pairing_graph(candidate, occasion):
         return False
     if not no_formal_shoes_for_lounge(candidate, occasion):
         return False

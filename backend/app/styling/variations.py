@@ -28,20 +28,15 @@ def _normalize(value: Any) -> str:
     return str(value).strip().lower().replace(" ", "_")
 
 
+from app.styling.rules import OUTFIT_RULE_CONFIG
+
+
 def _base_plan(variation_type: str) -> dict[str, Any]:
     """Create a variation plan with default weights."""
     return {
         "type": variation_type,
         "constraints": {},
-        "weights": {
-            "body_fit": 0.26,
-            "color": 0.20,
-            "style": 0.16,
-            "occasion": 0.14,
-            "season": 0.12,
-            "layering": 0.06,
-            "novelty": 0.06,
-        },
+        "weights": dict(OUTFIT_RULE_CONFIG["weights"]),
     }
 
 

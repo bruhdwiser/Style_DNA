@@ -140,9 +140,11 @@ def generate_candidates(
         for combination in product(*choices):
             # Build the base slot map
             if skeleton_name == "top_bottom":
+                bot_cat = str(_value(combination[1], "category", "")).strip().lower()
+                bot_slot = "ethnic_bottom" if bot_cat == "ethnic_bottom" else "bottom"
                 base_slots: dict[str, Any] = {
                     "top": combination[0],
-                    "bottom": combination[1],
+                    bot_slot: combination[1],
                 }
                 if len(combination) > 2:
                     base_slots["shoes"] = combination[2]
@@ -182,8 +184,9 @@ def generate_candidates(
                         ({**base_slots, slot: optional_item}, skeleton_name)
                     )
 
-            # Dupatta is optional for ethnic_set and saree looks
-            if skeleton_name in ("ethnic_set", "saree"):
+            # Dupatta is optional for ethnic_set, saree, and ethnic separates/lehenga looks
+            has_ethnic = skeleton_name in ("ethnic_set", "saree") or "ethnic_bottom" in base_slots
+            if has_ethnic:
                 for accessory in by_category.get("dupatta", []):
                     if _extract_item_id(accessory) not in base_ids:
                         variants.append(

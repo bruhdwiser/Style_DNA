@@ -17,6 +17,7 @@ from app.styling.rules import (
     OUTFIT_RULE_CONFIG,
     occasion_to_formality_band,
     season_match,
+    evaluate_pairing_strength,
 )
 
 
@@ -206,16 +207,108 @@ def layering_feature_score(candidate: Any) -> float:
     return 1.0 if layered else 0.5
 
 
-def novelty_feature_score(candidate: Any) -> float:
-    """Average the per-item novelty values (defaults to 0.5)."""
+VIBE_KEYWORDS: dict[str, set[str]] = {
+    "minimal": {"minimal", "clean", "simple", "classic", "monochrome"},
+    "classic": {"classic", "tailored", "smart_casual", "workwear", "structured"},
+    "streetwear": {"streetwear", "casual", "oversized", "hoodie", "sneakers", "sporty"},
+    "elegant": {"elegant", "formal", "chic", "luxurious", "graceful", "evening"},
+    "bohemian": {"boho", "bohemian", "floral", "relaxed", "artisanal"},
+    "romantic": {"romantic", "date", "soft", "elegant", "floral", "lace"},
+    "festive": {"festive", "traditional", "ethnic", "regal", "party"},
+    "casual": {"casual", "relaxed", "comfort", "daily"},
+}
+
+
+def vibe_feature_score(
+    candidate: Any,
+    vibe: str | None = None,
+    vibes: list[str] | None = None,
+) -> float:
+    """Score multi-label aesthetic vibe affinity across outfit pieces."""
+    target_vibes: list[str] = []
+    if vibe and str(vibe).strip():
+        target_vibes.append(str(vibe).strip().lower())
+    if vibes:
+        for v in vibes:
+            v_clean = str(v).strip().lower()
+            if v_clean and v_clean not in target_vibes:
+                target_vibes.append(v_clean)
+
+    if not target_vibes:
+        return 0.85
+
     items = _extract_items(candidate)
     if not items:
-        return 0.5
-    novelty_values: list[float] = []
+        return 0.50
+
+    keywords: set[str] = set()
+    for tv in target_vibes:
+        keywords.add(tv)
+        if tv in VIBE_KEYWORDS:
+            keywords.update(VIBE_KEYWORDS[tv])
+
+    matches = 0
     for item in items:
-        novelty = _coerce_item(item, "novelty", 0.5)
-        novelty_values.append(float(novelty))
-    return round(sum(novelty_values) / len(novelty_values), 3)
+        item_tags: set[str] = set()
+        for key in ("style", "styles", "style_tags", "vibe", "vibes"):
+            val = _coerce_item(item, key, None)
+            if isinstance(val, (list, tuple, set)):
+                item_tags.update(str(v).strip().lower() for v in val if v)
+            elif isinstance(val, str) and val.strip():
+                item_tags.add(val.strip().lower())
+        sub = str(_coerce_item(item, "sub_category", "") or "").lower()
+        if sub:
+            item_tags.add(sub)
+        if item_tags & keywords:
+            matches += 1
+
+    ratio = matches / max(1, len(items))
+    return round(0.40 + 0.60 * ratio, 3)
+
+
+def formality_fit_score(candidate: Any) -> float:
+    """Score harmony within the allowed formality spread."""
+    items = _extract_items(candidate)
+    if len(items) < 2:
+        return 0.90
+    formalities: list[int] = []
+    for item in items:
+        f = _coerce_item(item, "formality", 1)
+        try:
+            formalities.append(int(f) if f is not None else 1)
+        except (ValueError, TypeError):
+            formalities.append(1)
+    spread = max(formalities) - min(formalities)
+    if spread == 0:
+        return 1.0
+    elif spread == 1:
+        return 0.90
+    elif spread == 2:
+        return 0.75
+    return 0.20
+
+
+def freshness_feature_score(candidate: Any) -> float:
+    """Novelty and freshness score (neutral 0.50 when no wear history)."""
+    items = _extract_items(candidate)
+    if not items:
+        return 0.50
+    novelties = []
+    for item in items:
+        n = _coerce_item(item, "novelty", None)
+        if n is not None:
+            try:
+                novelties.append(float(n))
+            except (ValueError, TypeError):
+                pass
+    if not novelties:
+        return 0.50
+    return round(max(0.0, min(1.0, sum(novelties) / len(novelties))), 3)
+
+
+def novelty_feature_score(candidate: Any) -> float:
+    """Backward-compatible alias for freshness score."""
+    return freshness_feature_score(candidate)
 
 
 # -----------------------------------------------------------------------
@@ -228,19 +321,43 @@ def feature_scores(
     *,
     occasion: Any,
     season: Any,
+    vibe: str | None = None,
+    vibes: list[str] | None = None,
     body_shape: str | None = None,
     attrs: dict[str, Any] | None = None,
     seed: int | None = None,
 ) -> dict[str, float]:
     """Return the weighted component scores for a candidate outfit."""
+    occ_score = occasion_feature_score(candidate, occasion)
+    pair_score = evaluate_pairing_strength(candidate)
+    color_score = color_feature_score(candidate)
+    style_score = style_feature_score(candidate)
+    vibe_score = vibe_feature_score(candidate, vibe=vibe, vibes=vibes)
+    formality_score = formality_fit_score(candidate)
+    season_score = season_feature_score(candidate, season)
+    freshness_score = freshness_feature_score(candidate)
+    layer_score = layering_feature_score(candidate)
+    style_dna_score = 0.50
+
     return {
-        "body_fit": body_feature_score(candidate, body_shape, attrs),
-        "color": color_feature_score(candidate),
-        "style": style_feature_score(candidate),
-        "occasion": occasion_feature_score(candidate, occasion),
-        "season": season_feature_score(candidate, season),
-        "layering": layering_feature_score(candidate),
-        "novelty": novelty_feature_score(candidate),
+        # Normalized target features
+        "occasion_fit": occ_score,
+        "pairing_strength": pair_score,
+        "color_harmony": color_score,
+        "style_coherence": style_score,
+        "vibe_affinity": vibe_score,
+        "formality_fit": formality_score,
+        "season_fit": season_score,
+        "freshness": freshness_score,
+        "style_dna": style_dna_score,
+        "layering": layer_score,
+        "body_fit": 0.50,  # Neutral, 0.00 weight in score
+        # Legacy aliases for backward compatibility with tests/explainers
+        "color": color_score,
+        "style": style_score,
+        "occasion": occ_score,
+        "season": season_score,
+        "novelty": freshness_score,
     }
 
 
@@ -249,6 +366,8 @@ def score_outfit(
     *,
     occasion: Any,
     season: Any,
+    vibe: str | None = None,
+    vibes: list[str] | None = None,
     body_shape: str | None = None,
     attrs: dict[str, Any] | None = None,
     seed: int | None = None,
@@ -261,6 +380,8 @@ def score_outfit(
         candidate,
         occasion=occasion,
         season=season,
+        vibe=vibe,
+        vibes=vibes,
         body_shape=body_shape,
         attrs=attrs,
         seed=seed,
@@ -269,5 +390,21 @@ def score_outfit(
     numerator = sum(
         weights.get(name, 0.0) * value for name, value in values.items()
     )
-    denominator = sum(weights.values())
-    return round(numerator / denominator, 3) if denominator else 0.5
+    # The active target weights sum to 1.00; legacy aliases have 0.00 weight
+    active_weight_sum = sum(
+        weights.get(name, 0.0)
+        for name in (
+            "occasion_fit",
+            "pairing_strength",
+            "color_harmony",
+            "style_coherence",
+            "vibe_affinity",
+            "formality_fit",
+            "season_fit",
+            "freshness",
+            "style_dna",
+            "layering",
+        )
+    )
+    denominator = active_weight_sum if active_weight_sum > 0 else 1.0
+    return round(max(0.0, min(1.0, numerator / denominator)), 3)

@@ -72,6 +72,7 @@ def normalize_outfit_tags(raw_tags: Optional[list[str]]) -> list[str]:
 class GenerateOutfitsRequest(BaseModel):
     occasion: str = Field(default="casual", description="Occasion: casual, work, party, formal, festive, wedding, lounge, college")
     vibe: Optional[str] = Field(default=None, description="Aesthetic vibe: minimal, classic, bohemian, streetwear, elegant")
+    vibes: Optional[list[str]] = Field(default=None, description="Multiple aesthetic vibes for multi-label ranking")
     season: str = Field(default="all_season", description="Seasonal filter: summer, winter, monsoon, all_season")
     wardrobe_only: bool = Field(default=False, description="Strictly wardrobe items only (opt out of catalog completion)")
     allow_one_new_item: Optional[bool] = Field(default=None, description="Legacy alias: if True, enables catalog completion")
@@ -105,6 +106,11 @@ class OutfitResponse(BaseModel):
     user_id: str
     occasion: str
     vibe: Optional[str] = None
+    vibes: Optional[list[str]] = None
+    season: Optional[str] = None
+    shoes_included: bool = True
+    formality_spread: Optional[int] = None
+    core_type: Optional[str] = None
     skeleton: str
     score: float
     component_scores: dict[str, float] = {}
