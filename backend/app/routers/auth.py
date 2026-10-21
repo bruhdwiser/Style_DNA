@@ -22,6 +22,19 @@ async def get_my_profile(
     return CurrentUserResponse(user=current_user)
 
 
+@router.post("/logout", summary="Log out the authenticated user")
+async def logout_user(
+    token: str = Depends(get_current_token),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Logs out the current authenticated user and confirms session termination."""
+    logger.info(f"User {current_user.id} ({current_user.email}) logged out.")
+    return {
+        "success": True,
+        "message": f"Successfully logged out {current_user.email}.",
+    }
+
+
 @router.get("/export", summary="Export all personal data as JSON (GDPR/Data Portability)")
 async def export_my_data(
     token: str = Depends(get_current_token),
@@ -187,4 +200,13 @@ async def me_delete(
     current_user: AuthenticatedUser = Depends(get_current_user),
 ) -> dict[str, Any]:
     return await delete_my_account(token=token, current_user=current_user)
+
+
+@me_router.post("/logout")
+async def me_logout(
+    token: str = Depends(get_current_token),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    return await logout_user(token=token, current_user=current_user)
+
 

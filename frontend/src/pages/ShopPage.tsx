@@ -13,11 +13,22 @@ const CATEGORIES = [
   { id: 'luxury', label: 'AFTER HOURS' },
 ]
 
+const TAG_GROUPS = [
+  { key: 'style', label: 'STYLE', param: 'style', apiKey: 'styleTag', tags: ['minimal', 'classic', 'streetwear', 'feminine', 'traditional'] },
+  { key: 'occasion', label: 'GOING OUT FOR', param: 'occasion', apiKey: 'occasion', tags: ['casual', 'work', 'college', 'party', 'wedding'] },
+  { key: 'season', label: 'SEASON', param: 'season', apiKey: 'season', tags: ['summer', 'monsoon', 'winter', 'all_season'] },
+] as const
+
+const tagLabel = (tag: string) => tag.replace(/_/g, ' ').toUpperCase()
+
 export default function ShopPage() {
   usePageTracking()
   const [searchParams, setSearchParams] = useSearchParams()
   const currentCategory = searchParams.get('category') || 'all'
   const currentSearch = searchParams.get('q') || ''
+  const currentStyle = searchParams.get('style') || ''
+  const currentOccasion = searchParams.get('occasion') || ''
+  const currentSeason = searchParams.get('season') || ''
   const [products, setProducts] = useState<ProductItem[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -26,7 +37,15 @@ export default function ShopPage() {
 
   useEffect(() => {
     setLoading(true)
-    api.products.list({ category: currentCategory, q: currentSearch, sort: sortBy, limit: 50 })
+    api.products.list({
+      category: currentCategory,
+      q: currentSearch,
+      sort: sortBy,
+      styleTag: currentStyle || undefined,
+      occasion: currentOccasion || undefined,
+      season: currentSeason || undefined,
+      limit: 50,
+    })
       .then((res) => {
         setProducts(res.items || [])
         setTotal(res.total || 0)
@@ -36,7 +55,7 @@ export default function ShopPage() {
         setProducts([])
       })
       .finally(() => setLoading(false))
-  }, [currentCategory, currentSearch, sortBy])
+  }, [currentCategory, currentSearch, currentStyle, currentOccasion, currentSeason, sortBy])
 
   const updateParams = (key: string, value: string) => {
     const next = new URLSearchParams(searchParams)
@@ -103,9 +122,39 @@ export default function ShopPage() {
           </div>
         </div>
 
+        <section className="rack-tag-filters" aria-label="Filter the rack by clothing tags">
+          <div className="rack-tag-filters-heading">
+            <span className="eyebrow">FIND BY TAG</span>
+            <span>Choose tags to narrow the rail.</span>
+          </div>
+          <div className="rack-tag-groups">
+            {TAG_GROUPS.map((group) => {
+              const selected = searchParams.get(group.param) || ''
+              return (
+                <div className="rack-tag-group" key={group.key}>
+                  <span>{group.label}</span>
+                  <div>
+                    {group.tags.map((tag) => (
+                      <button
+                        type="button"
+                        key={tag}
+                        className={selected === tag ? 'is-selected' : ''}
+                        aria-pressed={selected === tag}
+                        onClick={() => updateParams(group.param, selected === tag ? '' : tag)}
+                      >
+                        {tagLabel(tag)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </section>
+
         <div className="shop-results-line">
           <span>{loading ? 'CHECKING THE RACK…' : `${total} ${total === 1 ? 'PIECE' : 'PIECES'}`}</span>
-          {(currentCategory !== 'all' || currentSearch) && (
+          {(currentCategory !== 'all' || currentSearch || currentStyle || currentOccasion || currentSeason) && (
             <button type="button" onClick={clearFilters}>CLEAR FILTERS ×</button>
           )}
         </div>

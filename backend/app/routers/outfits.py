@@ -65,6 +65,40 @@ SIGNED_URL_EXPIRY = 3600  # 1 hour
 # ==============================================================================
 
 
+def _matches_season(product_seasons: Any, target_season: Optional[str]) -> bool:
+    """Check if catalog product seasons match target season without asserting compatibility without evidence.
+
+    Option 1 (Strict Evidence Policy):
+    - If target_season is 'all_season', 'all', 'any', or empty, any product is accepted.
+    - If a specific climate is requested (e.g. 'winter', 'summer', 'monsoon'), missing/empty seasons metadata
+      is excluded because there is no evidence of suitability.
+    - A product matches if its seasons explicitly include the target season (or recognized alias) or 'all_season'.
+    """
+    if not target_season:
+        return True
+    norm_target = str(target_season).strip().lower().replace(" ", "_")
+    if norm_target in ("all_season", "all", "any"):
+        return True
+
+    if not product_seasons:
+        return False  # Missing/empty metadata cannot be claimed compatible with specific seasons
+
+    if isinstance(product_seasons, str):
+        raw_list = [product_seasons]
+    elif isinstance(product_seasons, (list, tuple, set)):
+        raw_list = list(product_seasons)
+    else:
+        raw_list = [str(product_seasons)]
+
+    norm_seasons = {str(s).strip().lower().replace(" ", "_") for s in raw_list if s}
+    if not norm_seasons:
+        return False
+
+    from ..styling.rules import OUTFIT_RULE_CONFIG
+    allowed = OUTFIT_RULE_CONFIG.get("season_aliases", {}).get(norm_target, {norm_target, "all_season"})
+    return bool(norm_seasons & allowed) or "all_season" in norm_seasons
+
+
 def _build_signed_view_url(client: Any, path: Optional[str]) -> Optional[str]:
     """Generate temporary signed view URL for private storage object."""
     if not path:
@@ -507,10 +541,11 @@ async def generate_outfit_recommendations(
             and str(p.get("audience", "all")).strip().lower() in ("unisex", "all")
         ]
 
-        # Filter products matching occasion
+        # Filter products matching occasion and season (Option 1: strict evidence policy)
         matching_catalog_items = [
             p for p in eligible_products
             if _matches_occasion(p.get("occasions"), occasion)
+            and _matches_season(p.get("seasons"), season)
         ]
         matching_catalog_items.sort(key=lambda p: int(p.get("price_cents") or 0))
 
@@ -544,7 +579,7 @@ async def generate_outfit_recommendations(
                 "fit": prod.get("fit", "regular"),
                 "formality": prod.get("formality", 1),
                 "occasions": prod.get("occasions") or [occasion],
-                "seasons": prod.get("seasons") or [season, "all_season"],
+                "seasons": prod.get("seasons") or [],
                 "styles": prod.get("style_tags") or [],
                 "pattern": prod.get("pattern", "solid"),
                 "is_available": True,
@@ -1175,16 +1210,20 @@ async def save_outfit(
     """Marks an outfit as saved for later with optional tags.
 
     - Normalizes tags to approved canonical set, defaulting to ['Try Later'].
-    - Fail-Closed Consistency (Option A): Ensures saving a look and recording its
-      Style DNA interaction are consistent. If recording the save event fails,
-      the save operation fails with HTTP 500 and the outfit is not saved.
+    - Atomicity & Consistency:
+      Calls `save_outfit_with_event` PostgreSQL RPC to atomically update the
+      outfit's saved status/tags and record the Style DNA save event in a single
+      ACID transaction with row-level locking (SELECT ... FOR UPDATE) to serialize
+      concurrent saves and enforce uniqueness.
+      Refuses non-atomic fallbacks to guarantee that outfit saved status and
+      Style DNA interaction events can never diverge.
     - Idempotency: Repeated saves or retagging on an already-saved look update tags
       without creating duplicate outfit_events save interactions.
     """
     client = get_user_scoped_supabase_client(token)
-    now_iso = datetime.now(timezone.utc).isoformat()
     tags = normalize_outfit_tags(body.tags if body else None)
 
+    # 1. Verify outfit exists and belongs to caller
     try:
         outfit_res = (
             client.from_("outfits")
@@ -1203,80 +1242,48 @@ async def save_outfit(
 
     outfit_row = outfit_res.data[0]
 
-    # Idempotent Style DNA Event Recording:
-    # Check if a save event was already recorded for this user and outfit.
-    has_existing_save_event = False
-    try:
-        existing_event = (
-            client.from_("outfit_events")
-            .select("id")
-            .eq("user_id", user.id)
-            .eq("outfit_id", outfit_id)
-            .eq("event_type", "save")
-            .limit(1)
-            .execute()
-        )
-        if existing_event.data:
-            has_existing_save_event = True
-    except Exception as ev_check_exc:
-        logger.error(f"Failed to check existing save events for outfit {outfit_id}: {ev_check_exc}")
-        raise AppException(
-            message="Unable to verify outfit interaction state.",
-            code="SAVE_EVENT_ERROR",
-            status_code=500,
-        )
-
-    # Fail-Closed Consistency (Option A):
-    # If this is the initial save (or no save event has been recorded yet),
-    # record the save event FIRST. If event recording fails, fail immediately
-    # without updating the outfits table so is_saved remains False.
-    if not has_existing_save_event:
-        event_metadata = _extract_outfit_event_metadata(
-            client=client,
-            outfit_id=outfit_id,
-            outfit_row=outfit_row,
-            extra_metadata={"tags": tags},
-        )
-        event_row = {
-            "id": str(uuid4()),
-            "user_id": user.id,
-            "outfit_id": outfit_id,
-            "event_type": "save",
-            "metadata": event_metadata,
-            "created_at": now_iso,
-        }
-        try:
-            client.from_("outfit_events").insert(event_row).execute()
-        except Exception as ev_exc:
-            logger.error(f"Failed to record save interaction for outfit {outfit_id}: {ev_exc}")
-            raise AppException(
-                message="Unable to record save interaction. Outfit was not saved.",
-                code="SAVE_EVENT_ERROR",
-                status_code=500,
-            )
-
-    # Update outfits table to persist saved status and normalized tags
-    try:
-        res = (
-            client.from_("outfits")
-            .update({"is_saved": True, "tags": tags, "updated_at": now_iso})
-            .eq("id", outfit_id)
-            .eq("user_id", user.id)
-            .execute()
-        )
-    except Exception as exc:
-        logger.error(f"Failed to save outfit {outfit_id}: {exc}")
-        raise AppException(message="Unable to save outfit.", code="SAVE_ERROR", status_code=500)
-
-    if not res.data:
-        raise AppException(message="Outfit not found or unauthorized.", code="NOT_FOUND", status_code=404)
-
-    return SaveOutfitResponse(
-        success=True,
-        message="Outfit saved for later.",
-        is_saved=True,
-        tags=tags,
+    # Extract item attributes for transparent Style DNA derivation (wardrobe + catalog)
+    event_metadata = _extract_outfit_event_metadata(
+        client=client,
+        outfit_id=outfit_id,
+        outfit_row=outfit_row,
+        extra_metadata={"tags": tags},
     )
+
+    # Execute atomic PostgreSQL RPC under ACID transaction
+    try:
+        rpc_res = client.rpc(
+            "save_outfit_with_event",
+            {
+                "p_outfit_id": outfit_id,
+                "p_tags": tags,
+                "p_event_metadata": event_metadata,
+            },
+        ).execute()
+        if rpc_res and getattr(rpc_res, "data", None):
+            return SaveOutfitResponse(
+                success=True,
+                message="Outfit saved for later.",
+                is_saved=True,
+                tags=tags,
+            )
+        logger.error(
+            f"Atomic save RPC save_outfit_with_event returned empty data for outfit {outfit_id}. "
+            "Refusing non-atomic fallback."
+        )
+        raise AppException(message="Unable to save outfit.", code="SAVE_ERROR", status_code=500)
+    except AppException:
+        raise
+    except Exception as rpc_exc:
+        err_msg = str(rpc_exc)
+        if "OUTFIT_NOT_FOUND" in err_msg:
+            raise AppException(message="Outfit not found or unauthorized.", code="NOT_FOUND", status_code=404)
+        logger.error(
+            f"Atomic save via save_outfit_with_event failed for outfit {outfit_id}: {rpc_exc}. "
+            "Refusing non-atomic fallback to guarantee consistent Style DNA tracking. "
+            "Deployment requirement: verify scripts/migrations/2026-10-21_save_outfit_and_event_rpc.sql is applied."
+        )
+        raise AppException(message="Unable to save outfit.", code="SAVE_ERROR", status_code=500)
 
 
 @router.put(
@@ -1515,9 +1522,10 @@ async def record_outfit_event(
         )
 
     # Sync is_saved state
-    if body.event_type == "save":
+    if body.event_type in ("save", "like"):
         try:
-            client.from_("outfits").update({"is_saved": True, "updated_at": now_iso}).eq("id", outfit_id).execute()
+            current_tags = outfit_row.get("tags") or ["Try Later"]
+            client.from_("outfits").update({"is_saved": True, "tags": current_tags, "updated_at": now_iso}).eq("id", outfit_id).execute()
         except Exception:
             pass
     elif body.event_type == "dislike":

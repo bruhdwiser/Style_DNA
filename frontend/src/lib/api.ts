@@ -13,6 +13,16 @@ export interface ProductItem {
   sizes: string[]
   isNew: boolean
   isSale: boolean
+  audience?: string
+  slot?: string | null
+  subtype?: string | null
+  color_tags?: string[]
+  formality?: number | null
+  style_tags?: string[]
+  occasions?: string[]
+  seasons?: string[]
+  fit?: string | null
+  pattern?: string | null
   stock?: number
 }
 
@@ -128,13 +138,26 @@ export const api = {
       sort?: string
       limit?: number
       offset?: number
+      styleTag?: string
+      occasion?: string
+      season?: string
     } = {}) => {
       const query = new URLSearchParams()
       if (params.category && params.category !== 'all') query.set('category', params.category)
-      if (params.q) query.set('q', params.q)
-      if (params.sort) query.set('sort', params.sort)
+      // The public API uses `search`; retain `q` here as the concise UI-facing
+      // parameter used by the rack URL.
+      if (params.q) query.set('search', params.q)
+      const sortMap: Record<string, string> = {
+        newest: 'featured',
+        price_asc: 'price-low',
+        price_desc: 'price-high',
+      }
+      if (params.sort) query.set('sort', sortMap[params.sort] || params.sort)
       if (params.limit !== undefined) query.set('limit', params.limit.toString())
       if (params.offset !== undefined) query.set('offset', params.offset.toString())
+      if (params.styleTag) query.set('style_tag', params.styleTag)
+      if (params.occasion) query.set('occasion', params.occasion)
+      if (params.season) query.set('season', params.season)
 
       const qs = query.toString()
       return request<ProductsResponse>(`/products${qs ? `?${qs}` : ''}`)
@@ -152,6 +175,12 @@ export const api = {
       image_url?: string
       colors?: string[]
       sizes?: string[]
+      style_tags?: string[]
+      occasions?: string[]
+      seasons?: string[]
+      slot?: string
+      subtype?: string
+      fit?: string
     }) => {
       return request<ProductItem>('/products', {
         method: 'POST',

@@ -171,6 +171,13 @@ export default function OutfitsPage() {
     }
   }, [activeTab, loadSavedOutfits, loadGaps])
 
+  // Pre-load saved looks on mount so the Saved Looks tab count is accurate immediately
+  useEffect(() => {
+    if (user) {
+      loadSavedOutfits('All')
+    }
+  }, [user, loadSavedOutfits])
+
   // Generate Outfits Handler (Deterministic normal generator, or shuffle with previous screen signatures)
   const handleGenerate = async (isShuffle = false) => {
     if (!user) return
@@ -216,6 +223,63 @@ export default function OutfitsPage() {
     setTagModalOutfit(outfit)
     const initialTags = outfit.tags && outfit.tags.length > 0 ? outfit.tags : ['Try Later']
     setModalTags(initialTags)
+  }
+
+  // Immediate single-click save for an outfit
+  const handleSaveOutfit = async (outfit: OutfitResponse) => {
+    const outfitId = outfit.id
+    if (outfit.is_saved) return
+
+    setSavingOutfitIds((prev) => new Set(prev).add(outfitId))
+    setActionError(null)
+
+    // Map occasion to matching approved tag or default to 'Try Later'
+    const occasionTag = APPROVED_OUTFIT_TAGS.find(
+      (t) => t.toLowerCase() === outfit.occasion?.toLowerCase()
+    )
+    const chosenTags = outfit.tags && outfit.tags.length > 0
+      ? outfit.tags
+      : (occasionTag ? [occasionTag] : ['Try Later'])
+
+    // Optimistic UI updates
+    if (generationResponse) {
+      setGenerationResponse({
+        ...generationResponse,
+        outfits: generationResponse.outfits.map((o) =>
+          o.id === outfitId ? { ...o, is_saved: true, tags: chosenTags } : o
+        ),
+      })
+    }
+    setSavedOutfits((prev) => {
+      const exists = prev.some((o) => o.id === outfitId)
+      if (exists) {
+        return prev.map((o) => (o.id === outfitId ? { ...o, is_saved: true, tags: chosenTags } : o))
+      }
+      return [{ ...outfit, is_saved: true, tags: chosenTags }, ...prev]
+    })
+
+    try {
+      await api.outfits.save(outfitId, chosenTags)
+    } catch (err: any) {
+      console.error('Save failed:', err)
+      // Revert optimistic update
+      if (generationResponse) {
+        setGenerationResponse({
+          ...generationResponse,
+          outfits: generationResponse.outfits.map((o) =>
+            o.id === outfitId ? { ...o, is_saved: false, tags: [] } : o
+          ),
+        })
+      }
+      setSavedOutfits((prev) => prev.filter((o) => o.id !== outfitId))
+      setActionError(err?.message || 'Failed to save outfit. Please try again.')
+    } finally {
+      setSavingOutfitIds((prev) => {
+        const next = new Set(prev)
+        next.delete(outfitId)
+        return next
+      })
+    }
   }
 
   // Save or update tags with optimistic UI update and rollback on failure
@@ -797,6 +861,7 @@ export default function OutfitsPage() {
                         key={outfit.id}
                         outfit={outfit}
                         isSaving={savingOutfitIds.has(outfit.id)}
+                        onSave={() => handleSaveOutfit(outfit)}
                         onOpenTagModal={() => handleOpenTagModal(outfit)}
                         onUnsave={() => handleUnsave(outfit)}
                         onDisliked={() => handleOutfitDisliked(outfit.id)}
@@ -902,6 +967,7 @@ export default function OutfitsPage() {
                       key={outfit.id}
                       outfit={outfit}
                       isSaving={savingOutfitIds.has(outfit.id)}
+                      onSave={() => handleSaveOutfit(outfit)}
                       onOpenTagModal={() => handleOpenTagModal(outfit)}
                       onUnsave={() => handleUnsave(outfit)}
                       onDisliked={() => handleOutfitDisliked(outfit.id)}
@@ -1146,6 +1212,7 @@ export default function OutfitsPage() {
 interface OutfitCardProps {
   outfit: OutfitResponse
   isSaving: boolean
+  onSave: () => void
   onOpenTagModal: () => void
   onUnsave: () => void
   onDisliked: () => void
@@ -1154,6 +1221,7 @@ interface OutfitCardProps {
 function OutfitCard({
   outfit,
   isSaving,
+  onSave,
   onOpenTagModal,
   onUnsave,
   onDisliked,
@@ -1173,12 +1241,15 @@ function OutfitCard({
       await api.outfits.recordEvent(outfit.id, eventType)
       const labels: Record<string, string> = {
         wear: 'Wore it • Added to your pattern',
-        like: 'Keep • Noted as a favorite',
+        like: 'Keep • Saved to your looks',
         dislike: 'Not for me • Removed from saved',
         skip: 'Skipped for now',
       }
       setRecentFeedback(labels[eventType] || 'Feedback saved')
       setTimeout(() => setRecentFeedback(null), 3000)
+      if (eventType === 'like' && !outfit.is_saved) {
+        onSave()
+      }
       if (eventType === 'dislike') {
         onDisliked()
       }
@@ -1238,11 +1309,11 @@ function OutfitCard({
             <button
               type="button"
               className="outfit-save-btn"
-              onClick={onOpenTagModal}
+              onClick={onSave}
               disabled={isSaving}
-              title="Save this look with tags"
+              title="Save this look to your saved looks"
             >
-              SAVE LOOK
+              {isSaving ? 'SAVING…' : 'SAVE LOOK'}
             </button>
           )}
         </div>

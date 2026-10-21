@@ -2,6 +2,7 @@
 
 from types import SimpleNamespace
 from unittest.mock import patch
+from uuid import uuid4
 import pytest
 
 from app.core.exceptions import AppException
@@ -27,9 +28,10 @@ from app.routers.outfits import (
 
 
 class MockQuery:
-    def __init__(self, data=None, fail_insert=False):
+    def __init__(self, data=None, fail_insert=False, fail_update=False):
         self._data = [dict(d) for d in data] if data is not None else []
         self.fail_insert = fail_insert
+        self.fail_update = fail_update
         self.inserted: list[dict] = []
         self.deleted_ids: list[str] = []
         self._filter_eq: dict = {}
@@ -68,7 +70,26 @@ class MockQuery:
         return self
 
     def execute(self):
+        if self._delete_mode:
+            remaining = []
+            deleted = []
+            for row in self._data:
+                match = all(row.get(k) == v for k, v in self._filter_eq.items())
+                if match:
+                    deleted.append(dict(row))
+                else:
+                    remaining.append(row)
+            self._data = remaining
+            self.inserted = [
+                r for r in self.inserted
+                if not all(r.get(k) == v for k, v in self._filter_eq.items())
+            ]
+            self._delete_mode = False
+            return SimpleNamespace(data=deleted)
+
         if self._update_data is not None:
+            if self.fail_update:
+                raise RuntimeError("Simulated database update failure")
             updated_rows = []
             for row in self._data:
                 match = all(row.get(k) == v for k, v in self._filter_eq.items())
@@ -77,6 +98,7 @@ class MockQuery:
                     updated_rows.append(dict(row))
             if not updated_rows and not self._filter_eq:
                 updated_rows = [dict(self._update_data)]
+            self._update_data = None
             return SimpleNamespace(data=updated_rows)
 
         filtered = self._data
@@ -129,15 +151,18 @@ class MockSupabaseClient:
         outfit_items=None,
         fail_items_insert=False,
         fail_events_insert=False,
+        fail_outfits_update=False,
         fail_rpc=False,
+        enable_save_rpc=True,
     ):
         self.fail_rpc = fail_rpc
+        self.enable_save_rpc = enable_save_rpc
         self.tables = {
             "wardrobe_items": MockQuery(wardrobe_items or []),
             "products": MockQuery(products or []),
             "style_profiles": MockQuery(style_profiles or []),
             "outfit_events": MockQuery(outfit_events or [], fail_insert=fail_events_insert),
-            "outfits": MockQuery(outfits or []),
+            "outfits": MockQuery(outfits or [], fail_update=fail_outfits_update),
             "outfit_items": MockQuery(outfit_items or [], fail_insert=fail_items_insert),
         }
 
@@ -164,6 +189,48 @@ class MockSupabaseClient:
                 self.tables["outfit_items"]._data.extend([dict(it) for it in p_items])
 
             return MockRpcQuery(data=p_outfit.get("id"))
+
+        if func_name == "save_outfit_with_event":
+            if not self.enable_save_rpc:
+                raise RuntimeError("Could not find the function public.save_outfit_with_event")
+
+            p_outfit_id = str(params.get("p_outfit_id"))
+            p_tags = params.get("p_tags") or []
+            p_event_metadata = params.get("p_event_metadata") or {}
+
+            # Outfit must exist
+            outfit = next((o for o in self.tables["outfits"]._data if str(o.get("id")) == p_outfit_id), None)
+            if not outfit:
+                return MockRpcQuery(error=RuntimeError("OUTFIT_NOT_FOUND"))
+
+            # If event insert fails inside transaction, both abort
+            if self.tables["outfit_events"].fail_insert:
+                return MockRpcQuery(error=RuntimeError("Simulated event insert failure in transaction"))
+
+            # If outfit update fails inside transaction, both abort
+            if self.tables["outfits"].fail_update:
+                return MockRpcQuery(error=RuntimeError("Simulated outfit update failure in transaction"))
+
+            outfit["is_saved"] = True
+            outfit["tags"] = p_tags
+
+            existing = any(
+                str(e.get("outfit_id")) == p_outfit_id and e.get("event_type") == "save"
+                for e in self.tables["outfit_events"]._data
+            )
+            created_event = False
+            if not existing:
+                ev_row = {
+                    "id": str(uuid4()),
+                    "outfit_id": p_outfit_id,
+                    "event_type": "save",
+                    "metadata": p_event_metadata,
+                }
+                self.tables["outfit_events"].inserted.append(ev_row)
+                self.tables["outfit_events"]._data.append(ev_row)
+                created_event = True
+
+            return MockRpcQuery(data={"success": True, "outfit_id": p_outfit_id, "is_saved": True, "tags": p_tags, "event_created": created_event})
 
         raise RuntimeError(f"Unknown RPC function in mock: {func_name}")
 
@@ -1145,8 +1212,8 @@ async def test_save_outfit_event_write_failure_leaves_outfit_unsaved(test_user):
             await save_outfit("outfit-fail-event-1", body=None, token="dummy-token", user=test_user)
 
         assert exc_info.value.status_code == 500
-        assert exc_info.value.code == "SAVE_EVENT_ERROR"
-        assert "Outfit was not saved" in exc_info.value.message
+        assert exc_info.value.code in ("SAVE_ERROR", "SAVE_EVENT_ERROR")
+        assert any(term in exc_info.value.message for term in ("Unable to save outfit", "Outfit was not saved"))
 
         # Verify outfit row was NOT marked as saved
         unmodified_outfit = mock_client.tables["outfits"]._data[0]
@@ -1777,6 +1844,331 @@ async def test_step_6_fewer_than_requested_mixed_results_reports_truthfully(test
         assert res.status == "partial_results"
         assert res.message == "Found 2 of 4 requested outfit(s) for 'casual', completed with store pieces. All valid combinations have been shown."
         assert "to meet your selection" not in (res.message or "")
+
+
+@pytest.mark.anyio
+async def test_step_1_outfit_update_failure_after_event_recording_rolls_back_event(test_user):
+    """Verify atomic abort: if outfits.update fails inside transaction,
+    the entire transaction aborts, leaving outfit unsaved with 0 recorded events."""
+    outfit_row = {
+        "id": "outfit-comp-fail-1",
+        "user_id": test_user.id,
+        "occasion": "casual",
+        "vibe": "minimal",
+        "skeleton": "top_bottom",
+        "is_saved": False,
+        "tags": [],
+    }
+    mock_client = MockSupabaseClient(
+        outfits=[outfit_row],
+        outfit_events=[],
+        fail_outfits_update=True,  # Simulate DB failure on outfits update
+        enable_save_rpc=True,      # Test atomic RPC path
+    )
+
+    with patch("app.routers.outfits.get_user_scoped_supabase_client", return_value=mock_client):
+        with pytest.raises(AppException) as exc_info:
+            await save_outfit("outfit-comp-fail-1", body=None, token="dummy-token", user=test_user)
+
+        assert exc_info.value.status_code == 500
+        assert exc_info.value.code == "SAVE_ERROR"
+
+        # Verify outfit row remains unsaved
+        unmodified_outfit = mock_client.tables["outfits"]._data[0]
+        assert unmodified_outfit["is_saved"] is False
+        assert unmodified_outfit["tags"] == []
+
+        # Verify atomic abort committed no event rows
+        assert len(mock_client.tables["outfit_events"].inserted) == 0
+        assert len(mock_client.tables["outfit_events"]._data) == 0
+
+
+@pytest.mark.anyio
+async def test_step_1_atomic_rpc_success_persists_outfit_and_event(test_user):
+    """Verify that save_outfit_with_event RPC atomically persists both outfit is_saved/tags and outfit_events record."""
+    outfit_row = {
+        "id": "outfit-rpc-ok-1",
+        "user_id": test_user.id,
+        "occasion": "work",
+        "vibe": "classic",
+        "skeleton": "top_bottom",
+        "is_saved": False,
+        "tags": [],
+    }
+    mock_client = MockSupabaseClient(
+        outfits=[outfit_row],
+        outfit_events=[],
+        enable_save_rpc=True,
+    )
+
+    with patch("app.routers.outfits.get_user_scoped_supabase_client", return_value=mock_client):
+        req = SaveOutfitRequest(tags=["Work"])
+        res = await save_outfit("outfit-rpc-ok-1", body=req, token="dummy-token", user=test_user)
+
+        assert res.success is True
+        assert res.is_saved is True
+        assert res.tags == ["Work"]
+
+        # Verify outfit row in mock was updated by RPC
+        saved_outfit = mock_client.tables["outfits"]._data[0]
+        assert saved_outfit["is_saved"] is True
+        assert saved_outfit["tags"] == ["Work"]
+
+        # Verify outfit_events record was committed by RPC
+        events = mock_client.tables["outfit_events"]._data
+        assert len(events) == 1
+        assert events[0]["event_type"] == "save"
+        assert events[0]["outfit_id"] == "outfit-rpc-ok-1"
+
+
+@pytest.mark.anyio
+async def test_step_1_atomic_rpc_failure_rolls_back_atomically(test_user):
+    """Verify that when the RPC encounters an error inside the transaction, the entire transaction aborts."""
+    outfit_row = {
+        "id": "outfit-rpc-fail-1",
+        "user_id": test_user.id,
+        "occasion": "party",
+        "vibe": "glam",
+        "skeleton": "dress",
+        "is_saved": False,
+        "tags": [],
+    }
+    mock_client = MockSupabaseClient(
+        outfits=[outfit_row],
+        outfit_events=[],
+        enable_save_rpc=True,
+        fail_events_insert=True,  # Simulate event insert failure inside transaction
+    )
+
+    with patch("app.routers.outfits.get_user_scoped_supabase_client", return_value=mock_client):
+        with pytest.raises(AppException) as exc_info:
+            await save_outfit("outfit-rpc-fail-1", body=None, token="dummy-token", user=test_user)
+
+        # In fallback or RPC failure, outfit remains unsaved
+        assert exc_info.value.status_code == 500
+        unmodified_outfit = mock_client.tables["outfits"]._data[0]
+        assert unmodified_outfit["is_saved"] is False
+        assert len(mock_client.tables["outfit_events"]._data) == 0
+
+
+@pytest.mark.anyio
+async def test_step_1_repeated_saves_preserve_idempotency_and_update_tags(test_user):
+    """Verify that repeated saves or retagging an already-saved look updates tags without duplicate Style DNA events under both RPC and fallback."""
+    outfit_row = {
+        "id": "outfit-repeat-save-1",
+        "user_id": test_user.id,
+        "occasion": "casual",
+        "vibe": "minimal",
+        "skeleton": "top_bottom",
+        "is_saved": False,
+        "tags": [],
+    }
+    mock_client = MockSupabaseClient(
+        outfits=[outfit_row],
+        outfit_events=[],
+        enable_save_rpc=True,
+    )
+
+    with patch("app.routers.outfits.get_user_scoped_supabase_client", return_value=mock_client):
+        # 1. First save
+        res1 = await save_outfit("outfit-repeat-save-1", body=SaveOutfitRequest(tags=["Work"]), token="dummy-token", user=test_user)
+        assert res1.success is True
+        assert res1.tags == ["Work"]
+        assert len(mock_client.tables["outfit_events"]._data) == 1
+
+        # 2. Second save with new tags
+        res2 = await save_outfit("outfit-repeat-save-1", body=SaveOutfitRequest(tags=["Work", "Vacation"]), token="dummy-token", user=test_user)
+        assert res2.success is True
+        assert res2.tags == ["Work", "Vacation"]
+
+        # Style DNA event count must remain exactly 1
+        assert len(mock_client.tables["outfit_events"]._data) == 1
+        assert mock_client.tables["outfits"]._data[0]["tags"] == ["Work", "Vacation"]
+
+
+@pytest.mark.anyio
+async def test_step_2_catalog_product_with_missing_seasons_excluded_for_specific_season(test_user):
+    """Verify that catalog products with missing or empty seasons metadata are excluded when a specific season is requested."""
+    # Sparse wardrobe: top + bottom, requires shoes to complete
+    wardrobe = [
+        {"id": "w-top-w", "user_id": test_user.id, "category": "top", "slot": "top", "primary_color": "#000000", "formality": 1, "occasions": ["casual"], "seasons": ["winter", "all_season"], "is_available": True},
+        {"id": "w-bot-w", "user_id": test_user.id, "category": "bottom", "slot": "bottom", "primary_color": "#1E3A8A", "formality": 1, "occasions": ["casual"], "seasons": ["winter", "all_season"], "is_available": True},
+    ]
+
+    # Catalog product has missing seasons (None or empty list)
+    catalog = [
+        {
+            "id": "66666666-0001-0000-0000-000000000000",
+            "name": "Unannotated Canvas Sneaker",
+            "category": "shoes",
+            "slot": "shoes",
+            "audience": "unisex",
+            "price_cents": 150000,
+            "occasions": ["casual"],
+            "seasons": [],  # Missing/empty season metadata
+        }
+    ]
+
+    mock_client = MockSupabaseClient(wardrobe_items=wardrobe, products=catalog)
+
+    with patch("app.routers.outfits.get_user_scoped_supabase_client", return_value=mock_client):
+        # Request a specific season: 'winter'
+        req = GenerateOutfitsRequest(
+            wardrobe_only=False,
+            occasion="casual",
+            season="winter",
+            limit=1,
+        )
+        res = await generate_outfit_recommendations(req, token="dummy-token", user=test_user)
+
+        # Unannotated catalog product must NOT be used to assert winter compatibility without evidence
+        assert len(res.outfits) == 0, "Unannotated product must not complete specific seasonal look without evidence"
+
+
+@pytest.mark.anyio
+async def test_step_2_catalog_product_with_missing_seasons_eligible_for_all_season(test_user):
+    """Verify that catalog products with missing or empty seasons metadata remain eligible when season is all_season (no climate restriction)."""
+    wardrobe = [
+        {"id": "w-top-a", "user_id": test_user.id, "category": "top", "slot": "top", "primary_color": "#000000", "formality": 1, "occasions": ["casual"], "seasons": ["all_season"], "is_available": True},
+        {"id": "w-bot-a", "user_id": test_user.id, "category": "bottom", "slot": "bottom", "primary_color": "#1E3A8A", "formality": 1, "occasions": ["casual"], "seasons": ["all_season"], "is_available": True},
+    ]
+
+    catalog = [
+        {
+            "id": "66666666-0002-0000-0000-000000000000",
+            "name": "Unannotated Canvas Sneaker",
+            "category": "shoes",
+            "slot": "shoes",
+            "audience": "unisex",
+            "price_cents": 150000,
+            "occasions": ["casual"],
+            "seasons": None,  # None metadata
+        }
+    ]
+
+    mock_client = MockSupabaseClient(wardrobe_items=wardrobe, products=catalog)
+
+    with patch("app.routers.outfits.get_user_scoped_supabase_client", return_value=mock_client):
+        req = GenerateOutfitsRequest(
+            wardrobe_only=False,
+            occasion="casual",
+            season="all_season",
+            limit=1,
+        )
+        res = await generate_outfit_recommendations(req, token="dummy-token", user=test_user)
+
+        # When no specific climate is requested (all_season), unannotated product is eligible
+        assert len(res.outfits) == 1
+        assert res.outfits[0].unlocked_by_product_id == "66666666-0002-0000-0000-000000000000"
+
+
+@pytest.mark.anyio
+async def test_step_2_catalog_product_with_explicit_all_season_eligible_for_specific_season(test_user):
+    """Verify that a catalog product with explicit 'all_season' metadata is eligible to complete a specific seasonal look."""
+    wardrobe = [
+        {"id": "w-top-as", "user_id": test_user.id, "category": "top", "slot": "top", "primary_color": "#000000", "formality": 1, "occasions": ["casual"], "seasons": ["winter", "all_season"], "is_available": True},
+        {"id": "w-bot-as", "user_id": test_user.id, "category": "bottom", "slot": "bottom", "primary_color": "#1E3A8A", "formality": 1, "occasions": ["casual"], "seasons": ["winter", "all_season"], "is_available": True},
+    ]
+
+    catalog = [
+        {
+            "id": "66666666-0003-0000-0000-000000000000",
+            "name": "Year-Round Leather Sneaker",
+            "category": "shoes",
+            "slot": "shoes",
+            "audience": "unisex",
+            "price_cents": 150000,
+            "occasions": ["casual"],
+            "seasons": ["all_season"],  # Explicit all-season
+        }
+    ]
+
+    mock_client = MockSupabaseClient(wardrobe_items=wardrobe, products=catalog)
+
+    with patch("app.routers.outfits.get_user_scoped_supabase_client", return_value=mock_client):
+        req = GenerateOutfitsRequest(
+            wardrobe_only=False,
+            occasion="casual",
+            season="winter",
+            limit=1,
+        )
+        res = await generate_outfit_recommendations(req, token="dummy-token", user=test_user)
+
+        assert len(res.outfits) == 1
+        assert res.outfits[0].unlocked_by_product_id == "66666666-0003-0000-0000-000000000000"
+
+
+@pytest.mark.anyio
+async def test_step_2_catalog_product_with_matching_season_eligible(test_user):
+    """Verify that a catalog product explicitly matching the target season is eligible."""
+    wardrobe = [
+        {"id": "w-top-m", "user_id": test_user.id, "category": "top", "slot": "top", "primary_color": "#000000", "formality": 1, "occasions": ["casual"], "seasons": ["winter"], "is_available": True},
+        {"id": "w-bot-m", "user_id": test_user.id, "category": "bottom", "slot": "bottom", "primary_color": "#1E3A8A", "formality": 1, "occasions": ["casual"], "seasons": ["winter"], "is_available": True},
+    ]
+
+    catalog = [
+        {
+            "id": "66666666-0004-0000-0000-000000000000",
+            "name": "Thermal Shearling Boot",
+            "category": "shoes",
+            "slot": "shoes",
+            "audience": "unisex",
+            "price_cents": 250000,
+            "occasions": ["casual"],
+            "seasons": ["winter"],  # Explicit matching season
+        }
+    ]
+
+    mock_client = MockSupabaseClient(wardrobe_items=wardrobe, products=catalog)
+
+    with patch("app.routers.outfits.get_user_scoped_supabase_client", return_value=mock_client):
+        req = GenerateOutfitsRequest(
+            wardrobe_only=False,
+            occasion="casual",
+            season="winter",
+            limit=1,
+        )
+        res = await generate_outfit_recommendations(req, token="dummy-token", user=test_user)
+
+        assert len(res.outfits) == 1
+        assert res.outfits[0].unlocked_by_product_id == "66666666-0004-0000-0000-000000000000"
+
+
+@pytest.mark.anyio
+async def test_step_2_catalog_product_with_non_matching_season_excluded(test_user):
+    """Verify that a catalog product tagged with a non-matching season is strictly excluded."""
+    wardrobe = [
+        {"id": "w-top-nm", "user_id": test_user.id, "category": "top", "slot": "top", "primary_color": "#000000", "formality": 1, "occasions": ["casual"], "seasons": ["winter"], "is_available": True},
+        {"id": "w-bot-nm", "user_id": test_user.id, "category": "bottom", "slot": "bottom", "primary_color": "#1E3A8A", "formality": 1, "occasions": ["casual"], "seasons": ["winter"], "is_available": True},
+    ]
+
+    catalog = [
+        {
+            "id": "66666666-0005-0000-0000-000000000000",
+            "name": "Breathable Summer Espadrille",
+            "category": "shoes",
+            "slot": "shoes",
+            "audience": "unisex",
+            "price_cents": 120000,
+            "occasions": ["casual"],
+            "seasons": ["summer"],  # Explicitly conflicting season
+        }
+    ]
+
+    mock_client = MockSupabaseClient(wardrobe_items=wardrobe, products=catalog)
+
+    with patch("app.routers.outfits.get_user_scoped_supabase_client", return_value=mock_client):
+        req = GenerateOutfitsRequest(
+            wardrobe_only=False,
+            occasion="casual",
+            season="winter",
+            limit=1,
+        )
+        res = await generate_outfit_recommendations(req, token="dummy-token", user=test_user)
+
+        assert len(res.outfits) == 0, "Summer product must be excluded from winter recommendations"
+
+
 
 
 

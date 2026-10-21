@@ -15,6 +15,8 @@ export interface ProductCardProps {
   sizes?: string[]
   isNew?: boolean
   isSale?: boolean
+  style_tags?: string[]
+  occasions?: string[]
   rating?: number
   reviewCount?: number
 }
@@ -30,6 +32,8 @@ export function ProductCard({
   sizes = [],
   isNew = false,
   isSale = false,
+  style_tags = [],
+  occasions = [],
 }: ProductCardProps) {
   const { addToCart } = useCart()
 
@@ -68,6 +72,13 @@ export function ProductCard({
           {colors.length > 0 && <span>{colors.length} COLOUR{colors.length === 1 ? '' : 'S'}</span>}
         </div>
         <Link to={`/shop/${id}`} className="product-tile-name">{name}</Link>
+        {(style_tags.length > 0 || occasions.length > 0) && (
+          <div className="product-tile-tags" aria-label="Clothing tags">
+            {[...style_tags, ...occasions].slice(0, 3).map((tag) => (
+              <span key={tag}>{tag.replace(/_/g, ' ')}</span>
+            ))}
+          </div>
+        )}
         <div className="product-tile-bottom">
           <p className="product-tile-price">
             ₹{price.toFixed(0)}

@@ -224,7 +224,7 @@ export default function StyleOnboardingPage() {
               <div className="onboarding-chips">
                 {STYLE_OPTIONS.map((opt) => (
                   <button
-                    key={opt.id}
+                    key={`style-${opt.id}`}
                     className={`onboarding-chip ${selectedStyles.includes(opt.id) ? 'selected' : ''}`}
                     onClick={() => toggleItem(selectedStyles, setSelectedStyles, opt.id)}
                   >
@@ -240,7 +240,7 @@ export default function StyleOnboardingPage() {
               <div className="onboarding-colors">
                 {COLOR_OPTIONS.map((opt) => (
                   <button
-                    key={opt.id}
+                    key={`color-${opt.id}`}
                     className={`onboarding-color-btn ${selectedColors.includes(opt.id) ? 'selected' : ''}`}
                     onClick={() => toggleItem(selectedColors, setSelectedColors, opt.id)}
                     title={opt.label}
@@ -261,7 +261,7 @@ export default function StyleOnboardingPage() {
               <div className="onboarding-chips">
                 {OCCASION_OPTIONS.map((opt) => (
                   <button
-                    key={opt.id}
+                    key={`occ-${opt.id}`}
                     className={`onboarding-chip ${selectedOccasions.includes(opt.id) ? 'selected' : ''}`}
                     onClick={() => toggleItem(selectedOccasions, setSelectedOccasions, opt.id)}
                   >

@@ -816,6 +816,7 @@ When reviewing this codebase with another agent, use the following audit checkli
    - For sparse wardrobes (2–3 garments), verify that catalog completion automatically fills missing slots without showing hard errors.
    - Confirm that otherwise valid wardrobe and mixed looks falling below preferred quality thresholds are included as last-resort alternatives with `is_below_threshold = True` and clear warnings rather than being hidden or causing false errors.
    - Confirm that empty responses preserve `budget_status`, `no_products_in_budget`, and `cheapest_alternative` when catalog completion was attempted.
+   - Verify strict catalog season evidence policy: catalog products with missing or empty `seasons` are excluded when a specific season (e.g. `winter`, `summer`) is requested, remaining eligible only when `season = "all_season"`. Products with explicit `all_season` match all seasons. Synthesized garments carry authentic catalog metadata (`seasons: prod.get("seasons") or []`) without fabricating requested season values.
 5. **Persistence Rollback & RPC**:
    - Confirm that `save_outfit_with_items` atomic PostgreSQL RPC is mandatory and non-atomic fallbacks are refused.
 6. **Tag Model & Feedback Semantics**:
@@ -823,7 +824,8 @@ When reviewing this codebase with another agent, use the following audit checkli
    - Inspect `save_outfit`, `update_outfit_tags`, `get_saved_outfits`, and `record_outfit_event` in [`backend/app/routers/outfits.py`](file:///c:/Users/bruhdweiser1/Desktop/everything/i_bleedcode/FlashFit_AI/Flashfits-AI/backend/app/routers/outfits.py).
    - Verify that `dislike` sets `is_saved = False` and `tags = []`.
    - Verify that re-saving or updating tags does not insert duplicate `save` events in `outfit_events`.
-   - Verify Option A fail-closed consistency: save fails with 500 `SAVE_EVENT_ERROR` if the learning event write fails, leaving `is_saved = False`.
+   - Verify atomic synchronization and fail-closed consistency:
+     - save_outfit_with_event PostgreSQL RPC is mandatory and atomically persists is_saved = true, 	ags, and records outfit_events under row locking (SELECT ... FOR UPDATE), with partial unique index idx_outfit_events_user_outfit_save preventing duplicate save events under concurrent requests. Non-atomic fallbacks are strictly refused to guarantee that outfit saved state and Style DNA events can never diverge.
 7. **Frontend State & Error Handling**:
    - Inspect [`frontend/src/pages/OutfitsPage.tsx`](file:///c:/Users/bruhdweiser1/Desktop/everything/i_bleedcode/FlashFit_AI/Flashfits-AI/frontend/src/pages/OutfitsPage.tsx). Confirm that single toggle "Use only my rack" defaults to `false`, tag modal opens on save/edit, tag filter bar calls `loadSavedOutfits(tag)`, and failed actions revert optimistic state and display `.outfits-action-error-banner`.
 8. **Recommendation Redundancy & Result-Count Reporting**:

@@ -25,6 +25,9 @@ export default function AdminPage() {
     image_url: '',
     colors: '',
     sizes: '',
+    style_tags: '',
+    occasions: '',
+    seasons: '',
   })
   const [creating, setCreating] = useState(false)
 
@@ -64,6 +67,15 @@ export default function AdminPage() {
         sizes: form.sizes
           ? form.sizes.split(',').map((s) => s.trim()).filter(Boolean)
           : [],
+        style_tags: form.style_tags
+          ? form.style_tags.split(',').map((tag) => tag.trim().toLowerCase()).filter(Boolean)
+          : [],
+        occasions: form.occasions
+          ? form.occasions.split(',').map((tag) => tag.trim().toLowerCase()).filter(Boolean)
+          : [],
+        seasons: form.seasons
+          ? form.seasons.split(',').map((tag) => tag.trim().toLowerCase()).filter(Boolean)
+          : [],
       })
 
       setSuccess('Product added successfully to catalog!')
@@ -75,6 +87,9 @@ export default function AdminPage() {
         image_url: '',
         colors: '',
         sizes: '',
+        style_tags: '',
+        occasions: '',
+        seasons: '',
       })
       loadProducts()
       setTimeout(() => setSuccess(null), 3000)
@@ -205,6 +220,28 @@ export default function AdminPage() {
                       <option value="formal">Formal</option>
                       <option value="luxury">Luxury</option>
                     </select>
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-muted-foreground uppercase">
+                    Style tags (comma-separated)
+                  </label>
+                  <Input
+                    value={form.style_tags}
+                    onChange={(e) => setForm({ ...form, style_tags: e.target.value })}
+                    placeholder="minimal, classic, streetwear"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-muted-foreground uppercase">Occasions</label>
+                    <Input value={form.occasions} onChange={(e) => setForm({ ...form, occasions: e.target.value })} placeholder="work, party" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-muted-foreground uppercase">Seasons</label>
+                    <Input value={form.seasons} onChange={(e) => setForm({ ...form, seasons: e.target.value })} placeholder="summer, all_season" />
                   </div>
                 </div>
 

@@ -57,6 +57,9 @@ async def list_products(
     sort: str = Query("featured", description="Sorting criteria: featured, price-low, price-high, name"),
     audience: Optional[str] = Query(None, description="Filter by audience (women, unisex, men)"),
     slot: Optional[str] = Query(None, description="Filter by styling slot (top, bottom, saree, etc.)"),
+    style_tag: Optional[str] = Query(None, description="Filter by a style tag such as minimal or streetwear"),
+    occasion: Optional[str] = Query(None, description="Filter by an occasion such as work or wedding"),
+    season: Optional[str] = Query(None, description="Filter by a season such as summer or winter"),
     formality: Optional[int] = Query(None, ge=0, le=3, description="Filter by formality level (0-3)"),
     max_price_cents: Optional[int] = Query(None, ge=0, description="Filter by maximum price in cents/paise"),
 ) -> ProductListResponse:
@@ -92,6 +95,15 @@ async def list_products(
     # Slot filter (for outfit skeleton resolution and styling suggestions)
     if slot and slot.strip():
         query = query.eq("slot", slot.strip().lower())
+
+    # Array fields are intentionally filtered independently so the rack can
+    # combine a style, occasion, and season without relying on name search.
+    if style_tag and style_tag.strip():
+        query = query.contains("style_tags", [style_tag.strip().lower()])
+    if occasion and occasion.strip():
+        query = query.contains("occasions", [occasion.strip().lower()])
+    if season and season.strip():
+        query = query.contains("seasons", [season.strip().lower()])
 
     # Formality filter
     if formality is not None:

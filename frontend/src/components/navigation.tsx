@@ -12,14 +12,26 @@ const links = [
 export function Navigation() {
   const [menuOpen, setMenuOpen] = useState(false)
   const { state } = useCart()
-  const { user, signOut } = useAuth()
+  const { user, session, signOut } = useAuth()
   const navigate = useNavigate()
 
   const closeMenu = () => setMenuOpen(false)
   const handleSignOut = async () => {
+    try {
+      if (session?.access_token) {
+        await fetch('/api/v1/auth/logout', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${session.access_token}`,
+          },
+        }).catch(() => {})
+      }
+    } catch {
+      // Best-effort backend notification
+    }
     await signOut()
     closeMenu()
-    navigate('/')
+    navigate('/login')
   }
 
   return (
@@ -47,7 +59,20 @@ export function Navigation() {
 
         <div className="masthead-actions">
           {user ? (
-            <Link to="/settings" className="masthead-account">ACCOUNT</Link>
+            <>
+              <Link to="/settings" className="masthead-account" title={user.email || 'Account'}>
+                ACCOUNT
+              </Link>
+              <button
+                type="button"
+                className="masthead-account"
+                onClick={handleSignOut}
+                style={{ background: 'transparent', border: 'none', cursor: 'pointer' }}
+                title="Log out of StyleSense"
+              >
+                SIGN OUT
+              </button>
+            </>
           ) : (
             <Link to="/login" className="masthead-account">SIGN IN</Link>
           )}
