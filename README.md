@@ -167,6 +167,28 @@ Apply the database schema and forward-only additive migrations in order via the 
 
 ---
 
+### 3.1 Wardrobe Manifest & Bulk Ingestion Tool
+
+The repository includes a production-grade wardrobe manifest importer (`scripts/import_manifest_wardrobe.py`) designed to safely populate a user's closet from the clothing catalog (`backend/tests/fixtures/test_wardrobe_manifest.csv`) and corresponding imagery (`Outfits/Images manifest/`).
+
+Key characteristics:
+- **Dynamic Auth User Resolution**: Resolves user UUID via Supabase Admin API (`auth.admin.list_users()`) by email address without creating dummy users or assuming hardcoded IDs.
+- **Automated Image Processing**: Strips dangerous EXIF/GPS metadata, auto-rotates orientations, re-encodes images to standardized display JPEGs, and generates 320px thumbnails via Pillow.
+- **Private Storage Upload**: Concurrently streams display and thumbnail images to the user's private folder in the `wardrobe` bucket (`{user_id}/{filename_stem}.jpg`).
+- **Formality Normalization**: Clamps manifest formality ratings (`0..5`) to the database check constraint (`0..3`) while preserving raw manifest formality in JSONB `metadata`.
+- **Rerun Idempotency**: Detects existing items by storage path, piece ID, or manifest filename, making repeated executions completely safe.
+
+**CLI Usage**:
+```bash
+# Dry run to preview matches and skips without uploading:
+python scripts/import_manifest_wardrobe.py --email user@example.com --dry-run
+
+# Live import targeting a specific user:
+python scripts/import_manifest_wardrobe.py --email user@example.com
+```
+
+---
+
 ### 4. Running the Development Servers
 
 #### Terminal 1: FastAPI Backend
