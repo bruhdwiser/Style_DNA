@@ -311,5 +311,26 @@ npm run build
 
 ---
 
+## 🚢 Deployment & Operational Troubleshooting Guide
+
+### Production Readiness Checklist
+1. **Secrets Management**: Ensure `SUPABASE_SERVICE_ROLE_KEY` is kept strictly server-side and never exposed in client bundles or public endpoints.
+2. **CORS Allowlist**: Set `CORS_ORIGINS` in `backend/.env` to include your production frontend domain (e.g., `["https://app.flashfits.ai"]`).
+3. **Storage Bucket Policies**: Verify the `wardrobe` bucket in Supabase has RLS enabled with owner-scoped `SELECT`, `INSERT`, and `DELETE` policies (`auth.uid()::text = (storage.foldername(name))[1]`).
+4. **Health Check Probes**:
+   - Liveness Probe: `GET /health` returns HTTP 200 `{"status": "healthy"}`
+   - Service Readiness: `GET /api/v1/health` verifies Supabase client connectivity and service availability
+
+### Common Operational Scenarios & Fixes
+
+| Symptom | Root Cause | Resolution |
+|---|---|---|
+| `Failed to fetch` / Cloudflare Error 521 | Supabase paused or database containers booting | Go to Supabase dashboard and unpause project; wait 60 seconds for GoTrue and Postgres containers to reach healthy status. |
+| Wardrobe upload returns 415 `invalid_mime_type` | Uploading unsupported image extension or raw text | Images must be JPEG, PNG, or WebP. The backend sanitization pipeline automatically normalizes display uploads to standardized `image/jpeg`. |
+| DB insert fails with `wardrobe_items_formality_check` | Raw manifest formality > 3 | Database check constraint enforces `formality BETWEEN 0 AND 3`. Clamped automatically by `import_manifest_wardrobe.py` while preserving raw value in `metadata`. |
+| 403 `Storage path does not belong to user` | Attempting to access or upload to a foreign user's prefix | Storage paths in the `wardrobe` bucket must strictly begin with `{auth.uid()}/`. The backend verifies path ownership before finalization. |
+
+---
+
 ## 📄 License
 This project is licensed under the MIT License.
