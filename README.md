@@ -252,6 +252,46 @@ npm run dev
 
 ---
 
+## 📡 Core REST API Reference
+
+The backend provides authenticated endpoints under `/api/v1/*` with interactive OpenAPI docs available at `/docs`:
+
+| Area | Method & Route | Description |
+|---|---|---|
+| **Outfits** | `POST /api/v1/outfits/generate` | Generates candidate outfits from wardrobe & catalog with physical rules & explanations. |
+| **Outfits** | `POST /api/v1/outfits/events` | Records user feedback (`like`, `save`, `wear`, `dislike`) to adjust Style DNA affinities. |
+| **Wardrobe** | `POST /api/v1/wardrobe/upload-url` | Issues a signed direct upload URL for the private `wardrobe` storage bucket. |
+| **Wardrobe** | `POST /api/v1/wardrobe/finalize-upload` | Strips EXIF, generates thumbnail, derives taxonomy tags, and registers the item. |
+| **Wardrobe** | `GET /api/v1/wardrobe/coverage` | Computes per-slot wardrobe depth and flags bottleneck missing pieces. |
+| **Gaps** | `POST /api/v1/gaps/analyze` | Counterfactual gap discovery finding items that maximize complete outfit unlocks. |
+| **Cart** | `POST /api/v1/cart/items` | RLS-scoped cart addition with color, size, and quantity validation. |
+| **Style DNA**| `GET /api/v1/style-dna/profile` | Returns explainable affinity weights across colors, patterns, and categories. |
+| **Consents** | `GET /api/v1/me/export` | GDPR-compliant JSON data export of all user profile, wardrobe, and event data. |
+
+---
+
+## 🧪 Testing & Verification Suite
+
+Flashfits AI enforces comprehensive test coverage across both unit logic and integration boundaries:
+
+```bash
+# Run all backend tests with pytest:
+cd backend
+pytest -v
+
+# Run styling engine unit tests:
+pytest tests/unit/test_engine_rules.py tests/unit/test_color_harmonies.py -v
+
+# Run wardrobe manifest fixture validation:
+pytest tests/unit/test_wardrobe_manifest.py -v
+
+# Run frontend production build check:
+cd ../frontend
+npm run build
+```
+
+---
+
 ## 🔒 Security & Privacy Guarantees
 
 1. **Authentication & Token Verification**: Handled in the browser via Supabase GoTrue. On protected requests, the frontend sends the user's JWT access token as an `Authorization: Bearer <token>` header. FastAPI verifies the token cryptographically before processing.
