@@ -1,12 +1,22 @@
 import os
+from pathlib import Path
 from typing import List, Optional
-from pydantic import Field, field_validator
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
+REPO_DIR = BACKEND_DIR.parent
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=("../.env.local", ".env.local", ".env"),
+        env_file=(
+            BACKEND_DIR / ".env",
+            REPO_DIR / ".env.local",
+            REPO_DIR / ".env",
+            ".env.local",
+            ".env",
+        ),
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -32,13 +42,16 @@ class Settings(BaseSettings):
     # Supabase Configuration
     # Fallback to NEXT_PUBLIC_* if SUPABASE_* is not explicitly set in environment
     SUPABASE_URL: str = Field(
-        default_factory=lambda: os.getenv("SUPABASE_URL") or os.getenv("NEXT_PUBLIC_SUPABASE_URL", "")
+        default="",
+        validation_alias=AliasChoices("SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_URL"),
     )
     SUPABASE_ANON_KEY: str = Field(
-        default_factory=lambda: os.getenv("SUPABASE_ANON_KEY") or os.getenv("NEXT_PUBLIC_SUPABASE_ANON_KEY", "")
+        default="",
+        validation_alias=AliasChoices("SUPABASE_ANON_KEY", "NEXT_PUBLIC_SUPABASE_ANON_KEY"),
     )
     SUPABASE_SERVICE_ROLE_KEY: str = Field(
-        default_factory=lambda: os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+        default="",
+        validation_alias=AliasChoices("SUPABASE_SERVICE_ROLE_KEY"),
     )
     SUPABASE_JWT_SECRET: Optional[str] = None
 
@@ -52,7 +65,8 @@ class Settings(BaseSettings):
 
     # Site URL
     SITE_URL: str = Field(
-        default_factory=lambda: os.getenv("SITE_URL") or os.getenv("NEXT_PUBLIC_SITE_URL", "http://localhost:5173")
+        default="http://localhost:5173",
+        validation_alias=AliasChoices("SITE_URL", "NEXT_PUBLIC_SITE_URL"),
     )
 
     @field_validator("CORS_ORIGINS", "ADMIN_EMAILS", "ADMIN_USER_IDS", mode="before")
