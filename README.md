@@ -18,6 +18,42 @@ Flashfits AI unifies an end-to-end e-commerce store with an advanced, determinis
 
 ---
 
+## 👗 Pure Python Outfit Engine Deep Dive
+
+The core styling intelligence is implemented in pure, dependency-free Python (`backend/app/styling/`). It evaluates wardrobe items through a 3-stage deterministic generation pipeline:
+
+```text
+[Wardrobe / Catalog Items]
+           │
+           ▼
+Stage 1: Skeleton Instantiation
+  Instantiates valid garments into discrete slot templates:
+  • Western 2-Piece:  Top + Bottom + Footwear (+ Layer)
+  • Western 1-Piece:  Dress / Jumpsuit + Footwear (+ Layer)
+  • Ethnic Set:       Kurti Set / Anarkali / Co-ord + Ethnic Footwear (+ Ethnic Layer)
+  • Traditional:      Saree + Blouse + Ethnic Footwear / Lehenga + Blouse + Dupatta
+           │
+           ▼
+Stage 2: Deterministic Rule Filtering
+  Prunes incompatible combinations using physical constraints:
+  • Occasion Compatibility: Checks dress codes for 10 occasions (casual, work, party, festive, wedding, etc.)
+  • Formality Alignment: Strict formality variance bounds (Δ <= 1.0) between upper, lower, and outer pieces
+  • Seasonal / Weather Feasibility: Excludes heavy wool in summer or open sandals in rain/snow
+  • Body Fit Rules: Neutral silhouette balance (e.g. fitted top with relaxed bottoms, or structured layering)
+           │
+           ▼
+Stage 3: Harmony Scoring & Style DNA Ranking
+  Scores surviving outfits out of 100 points:
+  • Color Harmonies: Evaluates monochrome, complementary, analogous, neutral balancing, and accent rules
+  • Pattern Clashing: Penalizes conflicting dense prints; rewards print + solid pairing
+  • Style DNA Modifiers: Applies bounded user affinity boosts (+/- 15 pts max) derived from like/save events
+           │
+           ▼
+[Ranked Outfits with Factual Explanations]
+```
+
+---
+
 ## 🛠️ Technology Stack
 
 | Layer | Technology | Responsibilities |
